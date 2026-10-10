@@ -114,7 +114,7 @@ func (s *deciderService) resolve(ctx context.Context, mf *model.MediaFile, clien
 		}
 	}
 
-	decision, err := s.MakeDecision(ctx, mf, clientInfo, TranscodeOptions{SkipProbe: true})
+	decision, err := MakeQualityDecision(ctx, s, mf, clientInfo, TranscodeOptions{SkipProbe: true})
 	if err != nil {
 		log.Error(ctx, "Error making transcode decision, falling back to raw", "id", mf.ID, err)
 		req.Format = "raw"

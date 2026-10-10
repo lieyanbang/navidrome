@@ -8,6 +8,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -45,20 +46,25 @@ type mediaStreamer struct {
 }
 
 type streamJob struct {
-	ms         *mediaStreamer
-	mf         *model.MediaFile
-	filePath   string
-	format     string
-	bitRate    int
-	sampleRate int
-	bitDepth   int
-	channels   int
-	offset     int
+	ms          *mediaStreamer
+	mf          *model.MediaFile
+	filePath    string
+	format      string
+	bitRate     int
+	sampleRate  int
+	bitDepth    int
+	channels    int
+	offset      int
+	sourceSize  int64
+	sourceMTime int64
 }
 
 func (j *streamJob) Key() string {
-	return fmt.Sprintf("%s.%s.%d.%d.%d.%d.%s.%d", j.mf.ID, j.mf.UpdatedAt.Format(time.RFC3339Nano), j.bitRate, j.sampleRate, j.bitDepth, j.channels, j.format, j.offset)
+	return fmt.Sprintf("%s.%s.%d.%d.%s.%d.%d.%d.%d.%s", j.mf.ID, j.mf.UpdatedAt.Format(time.RFC3339Nano),
+		j.sourceSize, j.sourceMTime, PermanentCachePreset, j.bitRate, j.sampleRate, j.bitDepth, j.channels, j.format)
 }
+
+const PermanentCachePreset = "mp3-cbr-192-v1"
 
 // NewStream creates a Stream for the given MediaFile and Request. It handles both raw streaming (no transcoding)
 // and transcoded streaming based on the requested format and bitrate. It also logs detailed information about
@@ -98,18 +104,41 @@ func (ms *mediaStreamer) NewStream(ctx context.Context, mf *model.MediaFile, req
 		return s, nil
 	}
 
-	job := &streamJob{
-		ms:         ms,
-		mf:         mf,
-		filePath:   filePath,
-		format:     format,
-		bitRate:    bitRate,
-		sampleRate: req.SampleRate,
-		bitDepth:   req.BitDepth,
-		channels:   req.Channels,
-		offset:     req.Offset,
+	// Non-raw requests use one server-controlled output profile regardless of
+	// client bitrate/profile preferences. Direct play remains the raw path above.
+	format = "mp3"
+	bitRate = MP3QualityBitrate
+	s.format = format
+	s.bitRate = bitRate
+	info, err := os.Stat(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("stat source media file: %w", err)
 	}
-	r, err := ms.cache.Get(ctx, job)
+	job := &streamJob{
+		ms:          ms,
+		mf:          mf,
+		filePath:    filePath,
+		format:      format,
+		bitRate:     bitRate,
+		sampleRate:  req.SampleRate,
+		bitDepth:    req.BitDepth,
+		channels:    req.Channels,
+		offset:      req.Offset,
+		sourceSize:  info.Size(),
+		sourceMTime: info.ModTime().UnixNano(),
+	}
+	var r *cache.CachedStream
+	if req.Offset > 0 {
+		// Seeking starts a partial transcode. It must never be published under
+		// the complete-song cache key.
+		var reader io.ReadCloser
+		reader, err = ms.startTranscode(ctx, job)
+		if err == nil {
+			r = &cache.CachedStream{Reader: reader, Closer: reader}
+		}
+	} else {
+		r, err = ms.cache.Get(ctx, job)
+	}
 	if err != nil {
 		// Rate-limit rejections are already logged at warn level by the
 		// producer; treating them as cache failures here would both
@@ -221,11 +250,15 @@ func GetTranscodingCache() TranscodingCache {
 }
 
 func NewTranscodingCache() TranscodingCache {
-	return cache.NewFileCache("Transcoding", conf.Server.TranscodingCacheSize,
-		consts.TranscodingCacheDir, consts.DefaultTranscodingCacheMaxItems,
+	return NewPermanentAudioCache(filepath.Join(conf.Server.CacheFolder.String(), "transcoding-permanent"),
 		func(ctx context.Context, arg cache.Item) (io.Reader, error) {
 			job := arg.(*streamJob)
-			command := LookupTranscodeCommand(ctx, job.ms.ds, job.format)
+			if info, err := os.Stat(job.filePath); err != nil {
+				return nil, fmt.Errorf("stat source media file before transcode: %w", err)
+			} else if info.Size() != job.sourceSize || info.ModTime().UnixNano() != job.sourceMTime {
+				return nil, errors.New("source media changed before transcode")
+			}
+			command := lookupPlaybackTranscodeCommand(ctx, job.ms.ds, job.format)
 			if command == "" {
 				log.Error(ctx, "No transcoding command available", "format", job.format)
 				return nil, os.ErrInvalid
@@ -278,8 +311,86 @@ func NewTranscodingCache() TranscodingCache {
 			// Tie the slot to the ffmpeg process: copyAndClose calls Close
 			// on this reader after io.Copy returns, which is exactly when
 			// ffmpeg has exited (either EOF or context cancellation).
-			return &releasingReadCloser{ReadCloser: out, release: release}, nil
+			validated := &sourceValidatedReadCloser{ReadCloser: out, path: job.filePath, size: job.sourceSize, mtime: job.sourceMTime}
+			return &releasingReadCloser{ReadCloser: validated, release: release}, nil
 		})
+}
+
+func (ms *mediaStreamer) startTranscode(ctx context.Context, job *streamJob) (io.ReadCloser, error) {
+	if info, err := os.Stat(job.filePath); err != nil {
+		return nil, fmt.Errorf("stat source media file before transcode: %w", err)
+	} else if info.Size() != job.sourceSize || info.ModTime().UnixNano() != job.sourceMTime {
+		return nil, errors.New("source media changed before transcode")
+	}
+	command := lookupPlaybackTranscodeCommand(ctx, ms.ds, job.format)
+	if command == "" {
+		log.Error(ctx, "No transcoding command available", "format", job.format)
+		return nil, os.ErrInvalid
+	}
+	release, err := ms.limiter.Acquire(ctx, limiterKey(ctx))
+	if err != nil {
+		log.Warn(ctx, "Refusing transcode: concurrent transcode limit reached",
+			"id", job.mf.ID, "user", userName(ctx),
+			"maxConcurrent", conf.Server.Transcoding.MaxConcurrent,
+			"maxPerUser", conf.Server.Transcoding.MaxConcurrentPerUser)
+		return nil, err
+	}
+
+	transcodingCtx := ctx
+	if !ms.limiter.Enabled() && !conf.Server.Transcoding.EnableCancellation {
+		transcodingCtx = request.AddValues(context.Background(), ctx)
+	}
+	out, err := ms.transcoder.Transcode(transcodingCtx, ffmpeg.TranscodeOptions{
+		Command:    command,
+		Format:     job.format,
+		FilePath:   job.filePath,
+		BitRate:    job.bitRate,
+		SampleRate: job.sampleRate,
+		BitDepth:   job.bitDepth,
+		Channels:   job.channels,
+		Offset:     job.offset,
+		Duration:   job.mf.Duration,
+	})
+	if err != nil {
+		release()
+		log.Error(ctx, "Error starting transcoder", "id", job.mf.ID, err)
+		return nil, os.ErrInvalid
+	}
+	validated := &sourceValidatedReadCloser{ReadCloser: out, path: job.filePath, size: job.sourceSize, mtime: job.sourceMTime}
+	return &releasingReadCloser{ReadCloser: validated, release: release}, nil
+}
+
+type sourceValidatedReadCloser struct {
+	io.ReadCloser
+	path  string
+	size  int64
+	mtime int64
+}
+
+func (r *sourceValidatedReadCloser) Close() error {
+	err := r.ReadCloser.Close()
+	info, statErr := os.Stat(r.path)
+	if statErr != nil {
+		return errors.Join(err, fmt.Errorf("verify source media after transcode: %w", statErr))
+	}
+	if info.Size() != r.size || info.ModTime().UnixNano() != r.mtime {
+		return errors.Join(err, errors.New("source media changed during transcode"))
+	}
+	return err
+}
+
+func lookupPlaybackTranscodeCommand(ctx context.Context, ds model.DataStore, format string) string {
+	if format == "mp3" {
+		// Playback quality is a server policy. A user-edited command must not
+		// change the codec or bitrate of the fixed MP3 mode.
+		for _, transcode := range consts.DefaultTranscodings {
+			if transcode.TargetFormat == "mp3" {
+				return transcode.Command
+			}
+		}
+		return ""
+	}
+	return LookupTranscodeCommand(ctx, ds, format)
 }
 
 // userName extracts the username from the context for logging purposes.

@@ -188,7 +188,8 @@ var _ = Describe("ResolveRequest", func() {
 		decider := svc.(*deciderService)
 		req := decider.ResolveRequest(ctx, mf, "opus", 0, 0)
 
-		Expect(req.Format).To(Equal("opus"))
+		Expect(req.Format).To(Equal("mp3"))
+		Expect(req.BitRate).To(Equal(192))
 	})
 
 	It("transcodes to requested format with bitrate limit", func() {
@@ -198,7 +199,7 @@ var _ = Describe("ResolveRequest", func() {
 		req := decider.ResolveRequest(ctx, mf, "mp3", 128, 0)
 
 		Expect(req.Format).To(Equal("mp3"))
-		Expect(req.BitRate).To(Equal(128))
+		Expect(req.BitRate).To(Equal(192))
 	})
 
 	It("returns raw when requested format matches source and no bitrate reduction", func() {
@@ -219,8 +220,8 @@ var _ = Describe("ResolveRequest", func() {
 		decider := svc.(*deciderService)
 		req := decider.ResolveRequest(ctx, mf, "", 128, 0)
 
-		Expect(req.Format).To(Equal("opus"))
-		Expect(req.BitRate).To(Equal(128))
+		Expect(req.Format).To(Equal("mp3"))
+		Expect(req.BitRate).To(Equal(192))
 	})
 
 	It("passes offset through", func() {
@@ -229,7 +230,8 @@ var _ = Describe("ResolveRequest", func() {
 		decider := svc.(*deciderService)
 		req := decider.ResolveRequest(ctx, mf, "opus", 128, 30)
 
-		Expect(req.Format).To(Equal("opus"))
+		Expect(req.Format).To(Equal("mp3"))
+		Expect(req.BitRate).To(Equal(192))
 		Expect(req.Offset).To(Equal(30))
 	})
 
@@ -276,7 +278,7 @@ var _ = Describe("ResolveRequest", func() {
 			req := decider.ResolveRequest(overrideCtx, mf, "", 0, 0)
 
 			Expect(req.Format).To(Equal("mp3"))
-			Expect(req.BitRate).To(Equal(320))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("applies no bitrate cap when both MaxBitRate and DefaultBitRate are 0", func() {
@@ -288,8 +290,7 @@ var _ = Describe("ResolveRequest", func() {
 			req := decider.ResolveRequest(overrideCtx, mf, "", 0, 0)
 
 			Expect(req.Format).To(Equal("mp3"))
-			// With no cap, lossless→lossy uses format default bitrate (160 for mp3 from mock)
-			Expect(req.BitRate).To(Equal(160))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("does not apply override when no transcoding is in context", func() {
@@ -311,7 +312,7 @@ var _ = Describe("ResolveRequest", func() {
 			req := decider.ResolveRequest(playerCtx, mf, "mp3", 0, 0)
 
 			Expect(req.Format).To(Equal("mp3"))
-			Expect(req.BitRate).To(Equal(320))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("uses client limit when it is more restrictive than player MaxBitRate", func() {
@@ -322,7 +323,7 @@ var _ = Describe("ResolveRequest", func() {
 			req := decider.ResolveRequest(playerCtx, mf, "mp3", 256, 0)
 
 			Expect(req.Format).To(Equal("mp3"))
-			Expect(req.BitRate).To(Equal(256))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("does not cap when player MaxBitRate is 0", func() {
@@ -345,8 +346,8 @@ var _ = Describe("ResolveRequest", func() {
 			decider := svc.(*deciderService)
 			req := decider.ResolveRequest(playerCtx, mf, "", 0, 0)
 
-			Expect(req.Format).To(Equal("opus"))
-			Expect(req.BitRate).To(Equal(256))
+			Expect(req.Format).To(Equal("mp3"))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("serves raw when only player MaxBitRate is set but no DefaultDownsamplingFormat", func() {
@@ -359,7 +360,8 @@ var _ = Describe("ResolveRequest", func() {
 			decider := svc.(*deciderService)
 			req := decider.ResolveRequest(playerCtx, mf, "", 0, 0)
 
-			Expect(req.Format).To(Equal("raw"))
+			Expect(req.Format).To(Equal("mp3"))
+			Expect(req.BitRate).To(Equal(192))
 		})
 	})
 
@@ -373,7 +375,8 @@ var _ = Describe("ResolveRequest", func() {
 			decider := svc.(*deciderService)
 			req := decider.ResolveRequest(ctx, mf, "xyz", 0, 0)
 
-			Expect(req.Format).To(Equal("opus"))
+			Expect(req.Format).To(Equal("mp3"))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("falls back to raw when DefaultDownsamplingFormat is empty", func() {
@@ -385,7 +388,8 @@ var _ = Describe("ResolveRequest", func() {
 			decider := svc.(*deciderService)
 			req := decider.ResolveRequest(ctx, mf, "xyz", 0, 0)
 
-			Expect(req.Format).To(Equal("raw"))
+			Expect(req.Format).To(Equal("mp3"))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("falls back to raw when DefaultDownsamplingFormat is also invalid", func() {
@@ -397,7 +401,8 @@ var _ = Describe("ResolveRequest", func() {
 			decider := svc.(*deciderService)
 			req := decider.ResolveRequest(ctx, mf, "xyz", 0, 0)
 
-			Expect(req.Format).To(Equal("raw"))
+			Expect(req.Format).To(Equal("mp3"))
+			Expect(req.BitRate).To(Equal(192))
 		})
 
 		It("preserves bitrate when falling back to DefaultDownsamplingFormat", func() {
@@ -409,8 +414,8 @@ var _ = Describe("ResolveRequest", func() {
 			decider := svc.(*deciderService)
 			req := decider.ResolveRequest(ctx, mf, "xyz", 128, 0)
 
-			Expect(req.Format).To(Equal("opus"))
-			Expect(req.BitRate).To(Equal(128))
+			Expect(req.Format).To(Equal("mp3"))
+			Expect(req.BitRate).To(Equal(192))
 		})
 	})
 })
@@ -466,7 +471,7 @@ var _ = Describe("ResolveClientRequest", func() {
 		req := svc.ResolveClientRequest(ctx, mf, ci, 0)
 
 		Expect(req.Format).To(Equal("mp3"))
-		Expect(req.BitRate).To(Equal(128))
+		Expect(req.BitRate).To(Equal(192))
 	})
 
 	It("applies the player's MaxBitRate cap", func() {

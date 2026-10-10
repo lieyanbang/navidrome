@@ -475,6 +475,11 @@ func buildDynamicArgs(opts TranscodeOptions) []string {
 	if opts.BitRate > 0 {
 		args = append(args, "-b:a", strconv.Itoa(opts.BitRate)+"k")
 	}
+	if strings.EqualFold(opts.Format, "mp3") {
+		// libmp3lame defaults to CBR with -b:a, but keep the mode explicit so
+		// the fixed-quality profile cannot drift into ABR/VBR through defaults.
+		args = append(args, "-abr", "0")
+	}
 	args = injectDynamicAudioFlags(args, opts)
 
 	args = append(args, "-v", "0")

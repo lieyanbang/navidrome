@@ -279,6 +279,7 @@ var _ = Describe("Transcode endpoints", func() {
 			Expect(resp.TranscodeDecision.TranscodeReasons).To(ConsistOf("container not supported"))
 			Expect(resp.TranscodeDecision.TranscodeStream).ToNot(BeNil())
 			Expect(resp.TranscodeDecision.TranscodeStream.Container).To(Equal("mp3"))
+			Expect(resp.TranscodeDecision.TranscodeStream.AudioBitrate).To(Equal(int32(192_000)))
 		})
 
 		Describe("player MaxBitRate cap", func() {
@@ -379,12 +380,8 @@ var _ = Describe("Transcode endpoints", func() {
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(mockTD.capturedClient.TranscodingProfiles).To(HaveLen(1))
-				Expect(mockTD.capturedClient.TranscodingProfiles[0].AudioCodec).To(Equal("opus"))
-				Expect(mockTD.capturedClient.DirectPlayProfiles).To(ConsistOf(stream.DirectPlayProfile{
-					Containers:  []string{"ogg"},
-					AudioCodecs: []string{"opus"},
-					Protocols:   []string{"http"},
-				}))
+				Expect(mockTD.capturedClient.TranscodingProfiles[0].AudioCodec).To(Equal("mp3"))
+				Expect(mockTD.capturedClient.MaxAudioBitrate).To(Equal(192))
 			})
 
 			It("falls back to negotiation when the forced format is unsupported", func() {
@@ -399,9 +396,9 @@ var _ = Describe("Transcode endpoints", func() {
 				_, err := router.GetTranscodeDecision(w, r)
 
 				Expect(err).ToNot(HaveOccurred())
-				// Profiles left intact for normal negotiation (forced format not applied).
-				Expect(mockTD.capturedClient.TranscodingProfiles).To(HaveLen(2))
-				Expect(mockTD.capturedClient.DirectPlayProfiles).ToNot(BeEmpty())
+				// Required transcodes are normalized to the fixed MP3 profile.
+				Expect(mockTD.capturedClient.TranscodingProfiles).To(HaveLen(1))
+				Expect(mockTD.capturedClient.TranscodingProfiles[0].AudioCodec).To(Equal("mp3"))
 			})
 
 			It("applies the maxBitRate cap on top of the forced format", func() {
@@ -416,9 +413,9 @@ var _ = Describe("Transcode endpoints", func() {
 
 				Expect(err).ToNot(HaveOccurred())
 				Expect(mockTD.capturedClient.TranscodingProfiles).To(HaveLen(1))
-				Expect(mockTD.capturedClient.TranscodingProfiles[0].AudioCodec).To(Equal("opus"))
-				Expect(mockTD.capturedClient.MaxAudioBitrate).To(Equal(128))
-				Expect(mockTD.capturedClient.MaxTranscodingAudioBitrate).To(Equal(128))
+				Expect(mockTD.capturedClient.TranscodingProfiles[0].AudioCodec).To(Equal("mp3"))
+				Expect(mockTD.capturedClient.MaxAudioBitrate).To(Equal(192))
+				Expect(mockTD.capturedClient.MaxTranscodingAudioBitrate).To(Equal(192))
 			})
 
 			withForcedBitRate := func(r *http.Request, format string, defaultBitRate, playerMaxBitRate int) *http.Request {
@@ -445,7 +442,7 @@ var _ = Describe("Transcode endpoints", func() {
 				_, err := router.GetTranscodeDecision(w, r)
 
 				Expect(err).ToNot(HaveOccurred())
-				Expect(mockTD.capturedClient.MaxAudioBitrate).To(Equal(320))
+				Expect(mockTD.capturedClient.MaxAudioBitrate).To(Equal(192))
 			})
 
 			It("ignores the transcoding default bitrate when the forced format is unsupported", func() {
@@ -455,7 +452,7 @@ var _ = Describe("Transcode endpoints", func() {
 				_, err := router.GetTranscodeDecision(w, r)
 
 				Expect(err).ToNot(HaveOccurred())
-				Expect(mockTD.capturedClient.MaxAudioBitrate).To(BeZero())
+				Expect(mockTD.capturedClient.MaxAudioBitrate).To(Equal(192))
 			})
 		})
 	})
@@ -616,7 +613,13 @@ func (m *mockTranscodeDecision) MakeDecision(_ context.Context, _ *model.MediaFi
 		return nil, m.decisionErr
 	}
 	if m.decision != nil {
-		return m.decision, nil
+		decision := *m.decision
+		decision.TranscodeReasons = append([]string(nil), m.decision.TranscodeReasons...)
+		if m.decision.TranscodeStream != nil {
+			transcodeStream := *m.decision.TranscodeStream
+			decision.TranscodeStream = &transcodeStream
+		}
+		return &decision, nil
 	}
 	return &stream.TranscodeDecision{}, nil
 }

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing/iotest"
 	"time"
 
@@ -90,8 +91,10 @@ var _ = Describe("MediaStreamer", func() {
 			Expect(err).ToNot(HaveOccurred())
 			defer s1.Close()
 
-			// Different cache key so it doesn't dedupe with the first request.
-			_, err = tightStreamer.NewStream(userCtx, mf, stream.Request{Format: "mp3", BitRate: 96})
+			// Use a distinct media identity so the request cannot dedupe with the active producer.
+			otherMedia := *mf
+			otherMedia.ID = "different-song"
+			_, err = tightStreamer.NewStream(userCtx, &otherMedia, stream.Request{Format: "mp3", BitRate: 96})
 			Expect(errors.Is(err, stream.ErrTooManyTranscodes)).To(BeTrue())
 		})
 
@@ -135,15 +138,44 @@ var _ = Describe("MediaStreamer", func() {
 		})
 
 		It("returns a seekable stream if the file is complete in the cache", func() {
-			s, err := streamer.NewStream(ctx, mf, stream.Request{Format: "mp3", BitRate: 32})
+			freshFFmpeg := tests.NewMockFFmpeg("fake data")
+			freshCache := stream.NewTranscodingCache()
+			Eventually(func() bool { return freshCache.Available(context.TODO()) }, 10*time.Second).Should(BeTrue())
+			freshStreamer := stream.NewMediaStreamer(ds, freshFFmpeg, freshCache)
+			s, err := freshStreamer.NewStream(ctx, mf, stream.Request{Format: "mp3", BitRate: 32})
 			Expect(err).To(BeNil())
-			_, _ = io.ReadAll(s)
+			streamed, readErr := io.ReadAll(s)
+			Expect(readErr).ToNot(HaveOccurred())
+			Expect(string(streamed)).To(Equal("fake data"))
 			_ = s.Close()
-			Eventually(func() bool { return ffmpeg.IsClosed() }, "3s").Should(BeTrue())
+			Eventually(func() bool { return freshFFmpeg.IsClosed() }, "3s").Should(BeTrue())
 
-			s, err = streamer.NewStream(ctx, mf, stream.Request{Format: "mp3", BitRate: 32})
+			s, err = freshStreamer.NewStream(ctx, mf, stream.Request{Format: "mp3", BitRate: 32})
 			Expect(err).To(BeNil())
 			Expect(s.Seekable()).To(BeTrue())
+			w := httptest.NewRecorder()
+			r := httptest.NewRequest(http.MethodGet, "/stream", nil)
+			r.Header.Set("Range", "bytes=2-4")
+			_, err = s.Serve(ctx, w, r)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(w.Code).To(Equal(http.StatusPartialContent))
+			Expect(w.Body.String()).To(Equal("ke "))
+			Expect(s.Close()).To(Succeed())
+		})
+
+		It("does not cache a partial offset transcode", func() {
+			freshFFmpeg := tests.NewMockFFmpeg("fake data")
+			freshCache := stream.NewTranscodingCache()
+			Eventually(func() bool { return freshCache.Available(context.TODO()) }, 10*time.Second).Should(BeTrue())
+			freshStreamer := stream.NewMediaStreamer(ds, freshFFmpeg, freshCache)
+			s, err := freshStreamer.NewStream(ctx, mf, stream.Request{Format: "mp3", BitRate: 32, Offset: 30})
+			Expect(err).ToNot(HaveOccurred())
+			_, err = io.ReadAll(s)
+			Expect(err).ToNot(HaveOccurred())
+			Expect(s.Close()).To(Succeed())
+			entries, err := os.ReadDir(filepath.Join(conf.Server.CacheFolder.String(), "transcoding-permanent"))
+			Expect(err).ToNot(HaveOccurred())
+			Expect(entries).To(BeEmpty())
 		})
 	})
 

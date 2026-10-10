@@ -1,6 +1,6 @@
 # Implementation and acceptance log
 
-Status: P0 and P1 passed. P2–P3 and CI remain in progress; P4 is deferred for manual Primuse testing.
+Status: P0–P2 passed. P3 and CI remain in progress; P4 is deferred for manual Primuse testing.
 
 ## P0 — repository and environment baseline
 
@@ -70,13 +70,38 @@ P0 PASS. Repository identity, upstream relationship, dedicated branch, local aut
 
 P1 PASS. Persistent external storage, systemd services, bind addresses, authentication, full-root WebDAV CRUD, symlink/traversal blocking, source-IP firewall behavior, service restart, and preservation of the existing printer endpoint were verified on the target device and from a LAN client.
 
+## P2 — fixed qualities and permanent transcode cache
+
+### Playback policy
+
+- Compatible direct-play requests continue to return the original file, including explicit legacy `format=raw` requests. Every required transcode is normalized to MP3 at 192 kbps through both legacy Subsonic and modern OpenSubsonic decision paths; client profile, requested bitrate, server format override, and downsampling defaults cannot select another encoded quality.
+- The MP3 path uses Navidrome's built-in default encoder command and explicitly passes `-abr 0` alongside `-b:a 192k` to libmp3lame. User-edited format commands cannot change this fixed profile. Raw sources retain their existing seek/range behavior.
+
+### Cache behavior
+
+- Added a separate `transcoding-permanent` adapter under the configured cache folder. Keys include media ID, database `UpdatedAt`, source size and nanosecond modification time, and preset `mp3-cbr-192-v1`; the source is checked before and after encoding so a concurrent source change cannot publish under an old key.
+- A file-backed reader streams appended bytes to consumers while the encoder runs. Concurrent consumers share one producer. Completed output is synced and atomically renamed from `.part`; only completed files are seekable and eligible after restart. Completed entries are not removed by TTL, LRU, capacity, or startup cleanup. Startup removes only abandoned `.part` files.
+- Source offsets bypass the full-song cache. Encoder-close errors, source changes, write errors including simulated ENOSPC, cancellation, empty output, and restart leftovers do not publish a final entry. The cache copies through fixed-size file I/O and does not buffer an entire song in memory.
+
+### Validation
+
+- Passed with Go 1.27.2 / GCC 13.3: `go test ./core/ffmpeg ./core/stream ./server/subsonic`.
+- Passed: `go test -race ./core/stream`.
+- Permanent-cache tests cover first-byte delivery before producer completion, concurrent dedupe, complete cache hits after constructing a new cache instance, HTTP Range 206 from completed output, source-version key invalidation, offset bypass, cancellation, startup `.part` recovery, encoder-close failure, and disk-write failure.
+- Real local encoder check used FFmpeg 6.1.1 on the repository's `tests/fixtures/test.flac`; ffprobe reported `codec_name=mp3`, `bit_rate=192000`, duration `1.044898`, and preserved title metadata. The fixture output was temporary and removed.
+- P2 behavior is locally validated. Its real OneCloud-to-Arasaka worker path and deployed runtime verification are recorded under P3 and remain in progress.
+
+### P2 acceptance state
+
+P2 PASS for policy, cache adapter, focused Go tests, simulated worker/write failures, and local FFmpeg/ffprobe output. Live remote-worker streaming, deployed cache persistence, and network behavior remain P3 acceptance items.
+
 ## Stage results
 
 | Stage | Status | Evidence |
 | --- | --- | --- |
 | P0 | PASS | Audit recorded above; baseline `./core/ffmpeg` and `./core/stream` tests passed; commit `3895aa50` pushed to the fork. |
 | P1 | PASS | External UUID mount and systemd units verified; Navidrome login, WebDAV CRUD/auth/symlink checks, source ACL, restart, resource use, and printer health recorded above. |
-| P2 | NOT STARTED | No implementation changes. |
+| P2 | PASS | Legacy and modern quality normalization, permanent disk cache, Range/seek, restart, source-change, cancellation and failure tests passed; real FFmpeg/ffprobe produced MP3 192 with tags. |
 | P3 | NOT STARTED | No worker deployment or E2E run. |
 | CI | NOT STARTED | No workflow changes or Actions runs. |
 | P4 | DEFERRED | Primuse manual validation is reserved for the user. |
