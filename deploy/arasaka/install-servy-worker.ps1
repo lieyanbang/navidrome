@@ -64,8 +64,19 @@ if ($keyText -notmatch '\A[0-9a-fA-F]{64,}\z' -or ($keyText.Length % 2) -ne 0) {
 if (-not (Get-NetIPAddress -AddressFamily IPv4 -IPAddress $bind -ErrorAction SilentlyContinue)) {
     throw "The expected worker bind address $bind is not assigned to this host."
 }
-if (Get-NetTCPConnection -State Listen -LocalPort $workerPort -ErrorAction SilentlyContinue) {
-    throw "TCP port $workerPort already has a listener. No service or rule was changed."
+$registeredWorker = Get-CimInstance Win32_Service -Filter "Name='$workerService'" -ErrorAction SilentlyContinue
+if ($registeredWorker -and $registeredWorker.PathName -notmatch '[\\/]Servy\.(Host|Service\.CLI)\.exe') {
+    throw "A non-Servy Windows service named $workerService already exists."
+}
+$existingListeners = @(Get-NetTCPConnection -State Listen -LocalPort $workerPort -ErrorAction SilentlyContinue)
+if ($existingListeners.Count -gt 0) {
+    if (-not $registeredWorker) { throw "TCP port $workerPort already has a listener without the expected Servy service." }
+    foreach ($listener in $existingListeners) {
+        $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($listener.OwningProcess)" -ErrorAction SilentlyContinue
+        if ($listener.LocalAddress -ne $bind -or $process.ExecutablePath -ine $PythonExe) {
+            throw "TCP port $workerPort is owned by an unexpected listener."
+        }
+    }
 }
 $pythonVersion = (& $PythonExe --version 2>&1 | Out-String).Trim()
 if ($pythonVersion -notmatch '^Python 3\.14\.') { throw "Expected Python 3.14, found $pythonVersion" }
@@ -107,7 +118,7 @@ if ($firewallRule) {
 
 foreach ($name in @($workerService, $watchdogService)) {
     $existing = Get-CimInstance Win32_Service -Filter "Name='$name'" -ErrorAction SilentlyContinue
-    if ($existing -and $existing.PathName -notmatch 'Servy\.Host\.exe') {
+    if ($existing -and $existing.PathName -notmatch '[\\/]Servy\.(Host|Service\.CLI)\.exe') {
         throw "A non-Servy Windows service named $name already exists."
     }
 }
