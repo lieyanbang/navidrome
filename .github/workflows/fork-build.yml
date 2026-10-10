@@ -1,0 +1,94 @@
+name: Fork builds (Windows AMD64 and Linux ARMv7-A)
+
+on:
+  push:
+    branches:
+      - master
+      - 'codex/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: Go and worker tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Test changed Go subsystems
+        run: go test -tags netgo,sqlite_fts5 ./core/ffmpeg ./core/stream ./server/subsonic
+
+      - name: Test permanent cache under the race detector
+        run: go test -race -tags netgo,sqlite_fts5 ./core/stream
+
+      - name: Test FFmpeg worker
+        run: python -m unittest discover -s worker/tests -v
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: tests
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows AMD64
+            artifact: navidrome-windows-amd64
+            platform: windows/amd64
+            binary: navidrome.exe
+          - name: Linux ARMv7-A
+            artifact: navidrome-linux-armv7-a
+            platform: linux/arm/v7
+            binary: navidrome
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure QEMU for the ARM smoke test
+        if: matrix.platform == 'linux/arm/v7'
+        uses: docker/setup-qemu-action@v4
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Build standalone binary
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ matrix.platform }}
+          target: binary
+          outputs: type=local,dest=./output
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_TAG=
+
+      - name: Verify Windows AMD64 binary format
+        if: matrix.platform == 'windows/amd64'
+        run: |
+          test -s "output/${{ matrix.binary }}"
+          file "output/${{ matrix.binary }}" | grep -E 'PE32\+.*x86-64'
+
+      - name: Smoke-test Linux ARMv7-A binary
+        if: matrix.platform == 'linux/arm/v7'
+        run: |
+          test -s "output/${{ matrix.binary }}"
+          chmod +x "output/${{ matrix.binary }}"
+          file "output/${{ matrix.binary }}" | grep -E 'ELF 32-bit LSB.*ARM.*EABI5'
+          "output/${{ matrix.binary }}" --help >/dev/null
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact }}
+          path: output/${{ matrix.binary }}
+          if-no-files-found: error
+          retention-days: 14

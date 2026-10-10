@@ -1,6 +1,6 @@
 # Implementation and acceptance log
 
-Status: P0–P2 passed. P3 and CI remain in progress; P4 is deferred for manual Primuse testing.
+Status: P0–P3 passed. CI artifact verification remains in progress; P4 is deferred for manual Primuse testing.
 
 ## P0 — repository and environment baseline
 
@@ -105,16 +105,27 @@ P2 PASS for policy, cache adapter, focused Go tests, simulated worker/write fail
 - Worker concurrency is one; input size and duration are bounded; FFmpeg output is streamed with bounded logs and a timed process kill. A separate watchdog polls both HTTP routes and asks Servy to restart only `ArasakaFFmpegWorker` after repeated failures.
 - Added Servy/Windows firewall deployment scripts and pinned FFmpeg provenance. The worker listener is constrained to `192.168.137.1:13324`, and its allow rule names only OneCloud source `192.168.137.11` and the worker Python executable. The key upload is temporary and ACL-restricted.
 
-### Local validation and remaining acceptance
+### Local validation and live deployment
 
 - Passed with Go 1.27.2 / GCC 13.3: `go test ./core/ffmpeg ./core/stream ./server/subsonic` and `go test -race ./core/stream` after adding the remote adapter.
 - Passed: `python -m unittest discover -s worker/tests -v` (4 tests), covering signed streaming output, one-use/restart-persistent nonces, invalid signatures, and health/readiness. The deployment PowerShell script parses successfully.
 - The remote adapter test verifies early response bytes while the source upload remains active and rejects a missing/failed completion trailer.
-- Live Servy deployment, cross-host network checks, crash/recovery, and OneCloud streaming/cache E2E have not yet been accepted. CI workflow and real GitHub artifact verification are also pending.
+- Deployed on Arasaka at `192.168.137.1:13324` with Servy services `ArasakaFFmpegWorker` and `ArasakaFFmpegWatchdog`, both Automatic and Running. The worker binds only to the configured LAN address. Its inbound firewall rule restricts TCP 13324 to the OneCloud address `192.168.137.11` and the worker's Python executable. OneCloud reached `/health` and `/ready`; a desktop source outside the allow list was denied.
+- OneCloud's systemd environment points at the worker URL and root-owned secret file. The secret file is mode `0640`, owned by `root:navidrome`; no secret is stored in the repository. Remote worker concurrency and both Navidrome concurrency limits are one.
+- Rebuilt Navidrome from commit `65b5bc0f` for Linux ARMv7 hard-float and deployed the dynamic CGo binary for live adapter acceptance (SHA-256 `8b461c7a5cc8b44abfa3befd3ca21d3ba2e59f60032caeb6f0fb698e16f3822a`). It started under the existing OneCloud systemd service. This is a temporary locally built acceptance binary; CI's Linux ARMv7-A artifact must replace it and pass on the same device before final CI acceptance.
+
+### Automated deployed E2E acceptance
+
+- `scripts/e2e_worker_acceptance.py` used synthetic FLAC fixtures, Navidrome's authenticated Subsonic API, SSH health/log checks, and exact per-run fixture names. It does not print credentials. It removed both fixtures and rescanned the library at completion.
+- All 13 checks passed: authentication and scan; worker crash restart; interrupted `.part` not published; streaming while writing permanent cache; retry completion; cache hit without a worker POST; cached Range `206`; offset bypass of full-song cache; independent second media request; cache persistence across Navidrome restart; cached and raw playback while the worker was stopped; HTTP watchdog recovery; and fixture cleanup/rescan.
+- During forced worker termination, the client had received 262,144 bytes of an expected roughly 21.6 MB output. The active `.part` existed during streaming and no partial/final cache object remained after failure. Servy restarted the process (PID changed from 7556 to 9612); retry returned the complete stream.
+- `ffprobe` verified MP3, 192,000 bit/s, 44.1 kHz, two channels, and 900.048958 seconds. The retry delivered its first byte in 155 ms and completed in 62.828 seconds. A subsequent completed-cache response returned the same 21,601,299 bytes without invoking the worker. A range request returned `206`; offset playback generated a separate response and bypassed the full-song cache.
+- After a controlled Navidrome restart, the full cache object remained playable. With the worker stopped, both completed-cache playback and raw FLAC direct playback succeeded. The separate HTTP watchdog detected and recovered a worker health failure; its restart counter increased by one.
+- Two complete permanent MP3 cache entries totaling 24,519,072 bytes remain on the external media volume by design. Both temporary source fixtures and their scanned library records were removed. The E2E wrote only its uniquely named fixtures and their corresponding permanent test cache entries.
 
 ### P3 acceptance state
 
-P3 IN PROGRESS. Local implementation tests pass; no live-runtime PASS is claimed yet.
+P3 PASS. Local implementation tests, actual Servy deployment, LAN isolation, streaming, persistent cache, forced-crash recovery, worker-offline fallback, HTTP watchdog recovery, and fixture cleanup all passed. Final end-to-end build artifact acceptance remains under CI.
 
 ## Stage results
 
@@ -123,6 +134,6 @@ P3 IN PROGRESS. Local implementation tests pass; no live-runtime PASS is claimed
 | P0 | PASS | Audit recorded above; baseline `./core/ffmpeg` and `./core/stream` tests passed; commit `3895aa50` pushed to the fork. |
 | P1 | PASS | External UUID mount and systemd units verified; Navidrome login, WebDAV CRUD/auth/symlink checks, source ACL, restart, resource use, and printer health recorded above. |
 | P2 | PASS | Legacy and modern quality normalization, permanent disk cache, Range/seek, restart, source-change, cancellation and failure tests passed; real FFmpeg/ffprobe produced MP3 192 with tags. |
-| P3 | IN PROGRESS | Worker and remote adapter are implemented and locally tested; live deployment and E2E remain. |
-| CI | NOT STARTED | No workflow changes or Actions runs. |
+| P3 | PASS | Servy worker/watchdog deployed; 13 live E2E checks passed; authenticated network path, 192 kb/s MP3, permanent cache, restart, crash recovery, worker-offline playback, watchdog, and test-fixture cleanup verified. |
+| CI | IN PROGRESS | Custom two-platform build and fork-specific deactivation of upstream build/release automation are pending. The Linux ARMv7-A Actions artifact still must be installed and validated on OneCloud. |
 | P4 | DEFERRED | Primuse manual validation is reserved for the user. |
