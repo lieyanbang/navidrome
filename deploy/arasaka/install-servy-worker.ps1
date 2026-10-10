@@ -19,12 +19,26 @@ $watchdogModule = Join-Path $WorkerRoot 'worker\arasaka_worker\watchdog.py'
 $sourceWorkerRoot = Join-Path $SourceRoot 'worker'
 $ffmpeg = Join-Path $WorkerRoot 'ffmpeg\bin\ffmpeg.exe'
 
+function Set-WorkerAcl {
+    $workerDirectories = @((Get-Item -LiteralPath $WorkerRoot)) + @(Get-ChildItem -LiteralPath $WorkerRoot -Directory -Recurse -Force)
+    foreach ($directory in $workerDirectories) {
+        & icacls.exe $directory.FullName /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to restrict worker directory $($directory.FullName)." }
+    }
+    $workerFiles = Get-ChildItem -LiteralPath $WorkerRoot -File -Recurse -Force
+    foreach ($file in $workerFiles) {
+        & icacls.exe $file.FullName /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to restrict worker file $($file.FullName)." }
+    }
+}
+
 if (-not (Test-Path -LiteralPath $ServyCli)) { throw "Servy CLI not found: $ServyCli" }
 if (-not (Test-Path -LiteralPath $PythonExe)) { throw "Python 3.14 not found: $PythonExe" }
 if (-not (Test-Path -LiteralPath (Join-Path $sourceWorkerRoot 'arasaka_worker\server.py')) -or
     -not (Test-Path -LiteralPath (Join-Path $sourceWorkerRoot 'arasaka_worker\watchdog.py'))) {
     throw "Worker source files are missing under $SourceRoot"
 }
+if (Test-Path -LiteralPath $WorkerRoot) { Set-WorkerAcl }
 if (Test-Path -LiteralPath $KeyUpload) {
     $operatorSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     & icacls.exe $KeyUpload /inheritance:r /grant:r "*$($operatorSid):(R)" '*S-1-5-18:(F)' '*S-1-5-32-544:(F)' | Out-Null
@@ -67,16 +81,7 @@ if ($existingProgramFilters.Count -gt 0) {
 }
 
 New-Item -ItemType Directory -Force -Path $stateDirectory, $logsDirectory | Out-Null
-$workerDirectories = @((Get-Item -LiteralPath $WorkerRoot)) + @(Get-ChildItem -LiteralPath $WorkerRoot -Directory -Recurse -Force)
-foreach ($directory in $workerDirectories) {
-    & icacls.exe $directory.FullName /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Failed to restrict worker directory $($directory.FullName)." }
-}
-$workerFiles = Get-ChildItem -LiteralPath $WorkerRoot -File -Recurse -Force
-foreach ($file in $workerFiles) {
-    & icacls.exe $file.FullName /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Failed to restrict worker file $($file.FullName)." }
-}
+Set-WorkerAcl
 
 $firewallRuleName = 'ArasakaFFmpegWorker-OneCloud-13324'
 $firewallRule = Get-NetFirewallRule -Name $firewallRuleName -PolicyStore ActiveStore -ErrorAction SilentlyContinue
