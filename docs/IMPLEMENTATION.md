@@ -13,7 +13,7 @@ Status: in progress through P0 audit. P1–P3 and CI have not passed yet.
 - Working branch: `codex/onecloud-webdav-worker`.
 - Existing Git author/committer identity: `lieyanbang <l@lieyanbang.com>`; left unchanged.
 - Fork description: “🎧 Your Personal Streaming Service — tuned for low-resource devices”.
-- `git ls-remote origin refs/heads/master` returned the expected baseline SHA. This proves public read access only; push permission remains to be verified with the first commit.
+- `git ls-remote origin refs/heads/master` returned the expected baseline SHA. Commit `3895aa50` was pushed to the fork branch successfully, verifying write access.
 - Initial worktree had only the user-provided `docs/TASK.md` untracked. No existing files were modified during the audit.
 
 ### Toolchain and source findings
@@ -44,13 +44,13 @@ Status: in progress through P0 audit. P1–P3 and CI have not passed yet.
 
 ### P0 acceptance state
 
-P0 remains in progress until commit/push capability is verified. No deployment or firewall changes have been made yet.
+P0 PASS. Repository identity, upstream relationship, dedicated branch, local author identity, public fork, baseline CGo tests, service audits, and an actual commit/push were verified. No deployment or firewall changes have been made yet.
 
 ## Stage results
 
 | Stage | Status | Evidence |
 | --- | --- | --- |
-| P0 | IN PROGRESS | Repository, toolchain, OneCloud, Arasaka, and upstream API audit recorded above; baseline CGo tests pass. Push verification remains. |
+| P0 | PASS | Audit recorded above; baseline `./core/ffmpeg` and `./core/stream` tests passed; commit `3895aa50` pushed to the fork. |
 | P1 | NOT STARTED | No services deployed. |
 | P2 | NOT STARTED | No implementation changes. |
 | P3 | NOT STARTED | No worker deployment or E2E run. |
