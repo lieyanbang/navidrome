@@ -1,0 +1,14 @@
+[Unit]
+Description=LAN access rules for OneCloud Navidrome and WebDAV
+DefaultDependencies=no
+After=local-fs.target
+Before=network-pre.target navidrome.service onecloud-webdav.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/onecloud-media-firewall.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

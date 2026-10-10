@@ -1,6 +1,6 @@
 # Implementation and acceptance log
 
-Status: in progress through P0 audit. P1–P3 and CI have not passed yet.
+Status: P0 and P1 passed. P2–P3 and CI remain in progress; P4 is deferred for manual Primuse testing.
 
 ## P0 — repository and environment baseline
 
@@ -44,14 +44,38 @@ Status: in progress through P0 audit. P1–P3 and CI have not passed yet.
 
 ### P0 acceptance state
 
-P0 PASS. Repository identity, upstream relationship, dedicated branch, local author identity, public fork, baseline CGo tests, service audits, and an actual commit/push were verified. No deployment or firewall changes have been made yet.
+P0 PASS. Repository identity, upstream relationship, dedicated branch, local author identity, public fork, baseline CGo tests, service audits, and an actual commit/push were verified. At the end of the read-only baseline audit, no deployment or firewall changes had been made; P1 changes and verification are recorded below.
+
+## P1 — OneCloud Navidrome and WebDAV deployment
+
+### Storage and systemd
+
+- Mounted `/dev/mmcblk0p1` (ext4 UUID `5307332f-8a4a-4f5a-a6ef-508b876913c7`) at `/srv/onecloud-data`. The persistent `/etc/fstab` entry uses `noatime,nosymfollow,nofail,x-systemd.device-timeout=15s,errors=remount-ro`; live `findmnt` confirmed those options.
+- Created `music`, `.cache`, `navidrome`, and `worker-state` directories on the external volume. The Navidrome DB and cache are configured on this volume. Both application units require the mount and have `ConditionPathIsMountPoint`, preventing writes to the system disk when it is absent.
+- `navidrome.service`, `onecloud-webdav.service`, and `onecloud-media-firewall.service` are enabled and active. Both server units ran through a controlled `systemctl restart` and returned to service. They bind only to `192.168.137.11:13326` and `192.168.137.11:13325`, respectively.
+- A first static CGo ARMv7 Navidrome binary spun before making system calls on the target. It was stopped and replaced with the normal dynamic CGo link used by the upstream Makefile. The replacement runs on the OneCloud ARMv7 CPU with its installed ARM hard-float libc; it reported ready in 12.62 seconds on first start and 395.9 ms after the initial database setup. Installed binary SHA-256: `0d12e194d43bad377bdaa7970e23f927f2e323fd0947522ca3a719aa5a1cfc43`.
+- Built upstream `hacdias/webdav` v5.17.0 from signed tag commit `94efdabc9e56d365339a202c37e49449fb8c6704` as a native ARMv7 binary. Installed binary SHA-256: `19de3c465ea4846e38b96f7e7550b54cd14f3d1633e25c32c9a2e9de9659d47f`.
+
+### Authentication, WebDAV, and network checks
+
+- Created the first Navidrome administrator through `/auth/createAdmin`; HTTP returned 200. A separate LAN login returned 200. The generated credential is stored only in `/root/onecloud-navidrome-admin.txt` (mode `0600`).
+- WebDAV uses Basic authentication, CRUD permissions, and `/srv/onecloud-data` as its complete root. Credentials are outside that root: `/etc/webdav/credentials.env` is `root:webdav 0640`, and the operator copy is `/root/onecloud-webdav-credentials.txt` (`0600`). No credentials were added to Git.
+- From LAN client `192.168.137.14`, unauthenticated WebDAV returned 401; authenticated root PROPFIND returned 207 and listed both `music` and `.cache`; MKCOL, PUT, GET, MOVE, and DELETE all passed in a temporary directory that was removed. After restart, unauthenticated WebDAV again returned 401 and authenticated PROPFIND returned 207.
+- A temporary symlink to `/etc/passwd` inside the WebDAV tree and an encoded `..` traversal request both returned 404; neither returned file contents. The temporary directory and symlink were removed. The ext4 mount reports `nosymfollow`.
+- The dedicated `ONECLOUD_MEDIA_LAN` INPUT chain accepts only TCP 13325/13326 from `192.168.137.0/24` and drops other sources to those ports. The host INPUT policy and unrelated ports were left unchanged. LAN client authentication/CRUD succeeded. Binding the Windows client to its non-LAN Tailscale source `100.124.104.23` caused requests to each port to time out, and the firewall DROP counter increased for each probe.
+- `onecloud-printer.service` remained active, and `http://127.0.0.1:8080/health/ready` returned HTTP 200 after deployment and restart. No other existing service was changed.
+- At steady state, Navidrome RSS was about 37.8 MiB and WebDAV RSS about 10.5 MiB. The external volume had about 28 GiB free after initial DB/cache creation; the root filesystem remains separate from media/cache writes.
+
+### P1 acceptance state
+
+P1 PASS. Persistent external storage, systemd services, bind addresses, authentication, full-root WebDAV CRUD, symlink/traversal blocking, source-IP firewall behavior, service restart, and preservation of the existing printer endpoint were verified on the target device and from a LAN client.
 
 ## Stage results
 
 | Stage | Status | Evidence |
 | --- | --- | --- |
 | P0 | PASS | Audit recorded above; baseline `./core/ffmpeg` and `./core/stream` tests passed; commit `3895aa50` pushed to the fork. |
-| P1 | NOT STARTED | No services deployed. |
+| P1 | PASS | External UUID mount and systemd units verified; Navidrome login, WebDAV CRUD/auth/symlink checks, source ACL, restart, resource use, and printer health recorded above. |
 | P2 | NOT STARTED | No implementation changes. |
 | P3 | NOT STARTED | No worker deployment or E2E run. |
 | CI | NOT STARTED | No workflow changes or Actions runs. |

@@ -1,0 +1,33 @@
+[Unit]
+Description=Navidrome personal music server
+Wants=network-online.target onecloud-media-firewall.service
+After=network-online.target onecloud-media-firewall.service
+RequiresMountsFor=/srv/onecloud-data
+ConditionPathIsMountPoint=/srv/onecloud-data
+
+[Service]
+Type=simple
+User=navidrome
+Group=navidrome
+UMask=0007
+EnvironmentFile=/etc/navidrome/navidrome.env
+ExecStart=/usr/local/bin/navidrome
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=60s
+LimitNOFILE=65535
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/srv/onecloud-data
+ReadOnlyPaths=/srv/onecloud-data/music
+
+[Install]
+WantedBy=multi-user.target

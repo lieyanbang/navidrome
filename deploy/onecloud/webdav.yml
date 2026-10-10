@@ -1,0 +1,11 @@
+address: 192.168.137.11
+port: 13325
+tls: false
+prefix: /
+directory: /srv/onecloud-data
+permissions: CRUD
+rulesBehavior: overwrite
+users:
+  - username: "{env}WEBDAV_USERNAME"
+    password: "{env}WEBDAV_PASSWORD"
+    permissions: CRUD
