@@ -609,8 +609,8 @@ def parse_args() -> argparse.Namespace:
     for label, path in (("credentials", args.credentials), ("OneCloud key", args.onecloud_key), ("Arasaka key", args.arasaka_key)):
         if not path.is_file():
             parser.error(f"{label} file does not exist")
-    if args.duration < 180:
-        parser.error("duration must be at least 180 seconds for live crash recovery validation")
+    if args.duration < 900:
+        parser.error("duration must be at least 900 seconds for reliable live crash recovery validation")
     return args
 
 
