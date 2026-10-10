@@ -24,15 +24,18 @@ import (
 
 // TranscodeOptions contains all parameters for a transcoding operation.
 type TranscodeOptions struct {
-	Command    string // DB command template (used to detect custom vs default)
-	Format     string // Target format (mp3, opus, aac, flac)
-	FilePath   string
-	BitRate    int     // kbps, 0 = codec default
-	SampleRate int     // 0 = no constraint
-	Channels   int     // 0 = no constraint
-	BitDepth   int     // 0 = no constraint; valid values: 16, 24, 32
-	Offset     int     // seconds
-	Duration   float32 // seconds; 0 = unknown. Only used to repair a piped FLAC header.
+	Command     string // DB command template (used to detect custom vs default)
+	Format      string // Target format (mp3, opus, aac, flac)
+	FilePath    string
+	MediaID     string  // Stable source identity for authenticated remote workers
+	SourceSize  int64   // Source fingerprint sent to remote workers
+	SourceMTime int64   // Source modification time in Unix nanoseconds
+	BitRate     int     // kbps, 0 = codec default
+	SampleRate  int     // 0 = no constraint
+	Channels    int     // 0 = no constraint
+	BitDepth    int     // 0 = no constraint; valid values: 16, 24, 32
+	Offset      int     // seconds
+	Duration    float32 // seconds; 0 = unknown. Only used to repair a piped FLAC header.
 }
 
 // AudioProbeResult contains authoritative audio stream properties from ffprobe.
@@ -57,7 +60,16 @@ type FFmpeg interface {
 }
 
 func New() FFmpeg {
-	return &ffmpeg{}
+	local := &ffmpeg{}
+	workerURL := os.Getenv("NAVIDROME_FFMPEG_WORKER_URL")
+	secretFile := os.Getenv("NAVIDROME_FFMPEG_WORKER_SECRET_FILE")
+	if workerURL == "" && secretFile == "" {
+		return local
+	}
+	if workerURL != "http://192.168.137.1:13324" {
+		return &remoteWorkerFFmpeg{local: local, initErr: errors.New("remote FFmpeg worker URL must be http://192.168.137.1:13324")}
+	}
+	return newRemoteWorkerFFmpeg(local, workerURL, secretFile)
 }
 
 // ErrAnimatedWebPUnsupported is returned by ConvertAnimatedImage when the

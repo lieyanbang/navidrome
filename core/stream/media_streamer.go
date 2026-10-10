@@ -293,15 +293,18 @@ func NewTranscodingCache() TranscodingCache {
 			}
 
 			out, err := job.ms.transcoder.Transcode(transcodingCtx, ffmpeg.TranscodeOptions{
-				Command:    command,
-				Format:     job.format,
-				FilePath:   job.filePath,
-				BitRate:    job.bitRate,
-				SampleRate: job.sampleRate,
-				BitDepth:   job.bitDepth,
-				Channels:   job.channels,
-				Offset:     job.offset,
-				Duration:   job.mf.Duration,
+				Command:     command,
+				Format:      job.format,
+				FilePath:    job.filePath,
+				MediaID:     job.mf.ID,
+				SourceSize:  job.sourceSize,
+				SourceMTime: job.sourceMTime,
+				BitRate:     job.bitRate,
+				SampleRate:  job.sampleRate,
+				BitDepth:    job.bitDepth,
+				Channels:    job.channels,
+				Offset:      job.offset,
+				Duration:    job.mf.Duration,
 			})
 			if err != nil {
 				release()
@@ -341,15 +344,18 @@ func (ms *mediaStreamer) startTranscode(ctx context.Context, job *streamJob) (io
 		transcodingCtx = request.AddValues(context.Background(), ctx)
 	}
 	out, err := ms.transcoder.Transcode(transcodingCtx, ffmpeg.TranscodeOptions{
-		Command:    command,
-		Format:     job.format,
-		FilePath:   job.filePath,
-		BitRate:    job.bitRate,
-		SampleRate: job.sampleRate,
-		BitDepth:   job.bitDepth,
-		Channels:   job.channels,
-		Offset:     job.offset,
-		Duration:   job.mf.Duration,
+		Command:     command,
+		Format:      job.format,
+		FilePath:    job.filePath,
+		MediaID:     job.mf.ID,
+		SourceSize:  job.sourceSize,
+		SourceMTime: job.sourceMTime,
+		BitRate:     job.bitRate,
+		SampleRate:  job.sampleRate,
+		BitDepth:    job.bitDepth,
+		Channels:    job.channels,
+		Offset:      job.offset,
+		Duration:    job.mf.Duration,
 	})
 	if err != nil {
 		release()

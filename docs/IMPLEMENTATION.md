@@ -95,6 +95,27 @@ P1 PASS. Persistent external storage, systemd services, bind addresses, authenti
 
 P2 PASS for policy, cache adapter, focused Go tests, simulated worker/write failures, and local FFmpeg/ffprobe output. Live remote-worker streaming, deployed cache persistence, and network behavior remain P3 acceptance items.
 
+## P3 — Arasaka worker, live E2E, and CI (in progress)
+
+### Worker and remote adapter implementation
+
+- Added a Python 3.14 worker with `/health`, `/ready`, and authenticated `/v1/transcode`; the initial backend accepts only the signed `mp3-cbr-192-v1` profile and invokes a fixed FFmpeg argument vector.
+- Source audio is uploaded as a bounded HTTP body over a pipe. Short-lived HMAC tokens bind media ID, source size/mtime, duration, offset, preset, expiry, and one-use nonce. The worker persists replay nonces in SQLite.
+- Worker responses are chunked and include completion status, byte count, and SHA-256 trailers. Navidrome validates all trailers before the permanent cache can publish a completed file. Redirects and HTTP proxies are disabled; the production endpoint is constrained to `http://192.168.137.1:13324`.
+- Worker concurrency is one; input size and duration are bounded; FFmpeg output is streamed with bounded logs and a timed process kill. A separate watchdog polls both HTTP routes and asks Servy to restart only `ArasakaFFmpegWorker` after repeated failures.
+- Added Servy/Windows firewall deployment scripts and pinned FFmpeg provenance. The worker listener is constrained to `192.168.137.1:13324`, and its allow rule names only OneCloud source `192.168.137.11` and the worker Python executable. The key upload is temporary and ACL-restricted.
+
+### Local validation and remaining acceptance
+
+- Passed with Go 1.27.2 / GCC 13.3: `go test ./core/ffmpeg ./core/stream ./server/subsonic` and `go test -race ./core/stream` after adding the remote adapter.
+- Passed: `python -m unittest discover -s worker/tests -v` (4 tests), covering signed streaming output, one-use/restart-persistent nonces, invalid signatures, and health/readiness. The deployment PowerShell script parses successfully.
+- The remote adapter test verifies early response bytes while the source upload remains active and rejects a missing/failed completion trailer.
+- Live Servy deployment, cross-host network checks, crash/recovery, and OneCloud streaming/cache E2E have not yet been accepted. CI workflow and real GitHub artifact verification are also pending.
+
+### P3 acceptance state
+
+P3 IN PROGRESS. Local implementation tests pass; no live-runtime PASS is claimed yet.
+
 ## Stage results
 
 | Stage | Status | Evidence |
@@ -102,6 +123,6 @@ P2 PASS for policy, cache adapter, focused Go tests, simulated worker/write fail
 | P0 | PASS | Audit recorded above; baseline `./core/ffmpeg` and `./core/stream` tests passed; commit `3895aa50` pushed to the fork. |
 | P1 | PASS | External UUID mount and systemd units verified; Navidrome login, WebDAV CRUD/auth/symlink checks, source ACL, restart, resource use, and printer health recorded above. |
 | P2 | PASS | Legacy and modern quality normalization, permanent disk cache, Range/seek, restart, source-change, cancellation and failure tests passed; real FFmpeg/ffprobe produced MP3 192 with tags. |
-| P3 | NOT STARTED | No worker deployment or E2E run. |
+| P3 | IN PROGRESS | Worker and remote adapter are implemented and locally tested; live deployment and E2E remain. |
 | CI | NOT STARTED | No workflow changes or Actions runs. |
 | P4 | DEFERRED | Primuse manual validation is reserved for the user. |
