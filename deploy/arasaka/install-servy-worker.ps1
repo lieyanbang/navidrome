@@ -67,8 +67,16 @@ if ($existingProgramFilters.Count -gt 0) {
 }
 
 New-Item -ItemType Directory -Force -Path $stateDirectory, $logsDirectory | Out-Null
-$aclOutput = & icacls.exe $WorkerRoot /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' /T /C
-if ($LASTEXITCODE -ne 0) { throw 'Failed to restrict worker files to SYSTEM and Administrators.' }
+$workerDirectories = @((Get-Item -LiteralPath $WorkerRoot)) + @(Get-ChildItem -LiteralPath $WorkerRoot -Directory -Recurse -Force)
+foreach ($directory in $workerDirectories) {
+    & icacls.exe $directory.FullName /inheritance:r /grant:r '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to restrict worker directory $($directory.FullName)." }
+}
+$workerFiles = Get-ChildItem -LiteralPath $WorkerRoot -File -Recurse -Force
+foreach ($file in $workerFiles) {
+    & icacls.exe $file.FullName /inheritance:r /grant:r '*S-1-5-18:F' '*S-1-5-32-544:F' | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Failed to restrict worker file $($file.FullName)." }
+}
 
 $firewallRuleName = 'ArasakaFFmpegWorker-OneCloud-13324'
 $firewallRule = Get-NetFirewallRule -Name $firewallRuleName -PolicyStore ActiveStore -ErrorAction SilentlyContinue
@@ -150,7 +158,10 @@ if (-not (Get-CimInstance Win32_Service -Filter "Name='$watchdogService'" -Error
 
 foreach ($name in @($workerService, $watchdogService)) {
     $service = Get-Service -Name $name -ErrorAction Stop
-    if ($service.Status -ne 'Running') {
+    if ($service.Status -eq 'Running') {
+        & $ServyCli restart --quiet "--name=$name"
+        if ($LASTEXITCODE -ne 0) { throw "Servy could not restart $name." }
+    } else {
         & $ServyCli start --quiet "--name=$name"
         if ($LASTEXITCODE -ne 0) { throw "Servy could not start $name." }
     }
