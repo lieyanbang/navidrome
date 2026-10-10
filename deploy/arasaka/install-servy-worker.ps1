@@ -72,14 +72,6 @@ if ($pythonVersion -notmatch '^Python 3\.14\.') { throw "Expected Python 3.14, f
 $encoderOutput = & $ffmpeg -hide_banner -encoders 2>&1 | Out-String
 if ($encoderOutput -notmatch 'libmp3lame') { throw 'FFmpeg does not expose libmp3lame.' }
 
-$existingProgramFilters = @(
-    Get-NetFirewallApplicationFilter -PolicyStore ActiveStore |
-        Where-Object { $_.Program -ieq $PythonExe }
-)
-if ($existingProgramFilters.Count -gt 0) {
-    throw 'A pre-existing firewall application filter targets this Python executable; inspect it before binding the worker.'
-}
-
 New-Item -ItemType Directory -Force -Path $stateDirectory, $logsDirectory | Out-Null
 Set-WorkerAcl
 
@@ -98,6 +90,15 @@ if ($firewallRule) {
         throw "Firewall rule $firewallRuleName already exists with unexpected settings."
     }
 } else {
+    $existingProgramFilters = @(
+        Get-NetFirewallRule -PolicyStore ActiveStore |
+            Where-Object { $_.Name -ne $firewallRuleName } |
+            ForEach-Object { $_ | Get-NetFirewallApplicationFilter } |
+            Where-Object { $_.Program -ieq $PythonExe }
+    )
+    if ($existingProgramFilters.Count -gt 0) {
+        throw 'A pre-existing firewall application filter targets this Python executable; inspect it before binding the worker.'
+    }
     New-NetFirewallRule -Name $firewallRuleName -DisplayName 'Arasaka FFmpeg Worker from OneCloud' `
         -Direction Inbound -Action Allow -Enabled True -Profile Any -Protocol TCP `
         -LocalAddress $bind -LocalPort $workerPort -RemoteAddress '192.168.137.11' `
