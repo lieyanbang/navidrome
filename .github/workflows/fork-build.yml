@@ -38,6 +38,8 @@ jobs:
     name: Build ${{ matrix.name }}
     needs: tests
     runs-on: ubuntu-24.04
+    env:
+      DOCKER_BUILD_RECORD_UPLOAD: 'false'
     strategy:
       fail-fast: false
       matrix:
