@@ -1,7 +1,7 @@
 {
   "name": "coverartarchive",
   "author": "Navidrome community contributors; maintained by lieyanbang",
-  "version": "1.1.1",
+  "version": "1.1.3",
   "description": "Album cover art from verified MusicBrainz release groups and the Cover Art Archive",
   "website": "https://github.com/sunsetroute1/navidrome-coverartarchive-plugin",
   "permissions": {
@@ -9,7 +9,9 @@
       "reason": "Search MusicBrainz releases and read Cover Art Archive metadata",
       "requiredHosts": [
         "musicbrainz.org",
-        "coverartarchive.org"
+        "coverartarchive.org",
+        "archive.org",
+        "*.archive.org"
       ]
     },
     "cache": {

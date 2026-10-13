@@ -17,7 +17,7 @@ import (
 const (
 	musicBrainzURL = "https://musicbrainz.org/ws/2/release-group/"
 	caaURL         = "https://coverartarchive.org/"
-	userAgent      = "NavidromeCoverArtArchive/1.1.1 (+https://github.com/lieyanbang/navidrome)"
+	userAgent      = "NavidromeCoverArtArchive/1.1.3 (+https://github.com/lieyanbang/navidrome)"
 	positiveTTL    = int64(30 * 24 * 60 * 60)
 	negativeTTL    = int64(6 * 60 * 60)
 	maxNameBytes   = 256
@@ -32,6 +32,11 @@ func init() {
 }
 
 var _ metadata.AlbumImagesProvider = (*caaPlugin)(nil)
+var _ metadata.AlbumInfoProvider = (*caaPlugin)(nil)
+
+func (*caaPlugin) GetAlbumInfo(request metadata.AlbumRequest) (*metadata.AlbumInfoResponse, error) {
+	return newClient(nil, shared.HostCache{}, time.Now, time.Sleep).getAlbumInfo(request)
+}
 
 func (*caaPlugin) GetAlbumImages(request metadata.AlbumRequest) (*metadata.AlbumImagesResponse, error) {
 	return newClient(nil, shared.HostCache{}, time.Now, time.Sleep).getAlbumImages(request)
@@ -43,6 +48,37 @@ type pluginClient struct {
 	deadline time.Time
 	now      func() time.Time
 	sleep    func(time.Duration)
+}
+
+func (c *pluginClient) getAlbumInfo(request metadata.AlbumRequest) (*metadata.AlbumInfoResponse, error) {
+	name := strings.TrimSpace(request.Name)
+	artist := strings.TrimSpace(request.Artist)
+	mbid := strings.ToLower(strings.TrimSpace(request.MBID))
+	if len(name) > maxNameBytes || len(artist) > maxNameBytes {
+		return nil, nil
+	}
+	if validMBID(mbid) {
+		return &metadata.AlbumInfoResponse{
+			Name: name,
+			MBID: mbid,
+			URL:  "https://musicbrainz.org/release/" + mbid,
+		}, nil
+	}
+	if name == "" || artist == "" {
+		return nil, nil
+	}
+	releaseGroupID, found, err := c.searchReleaseGroup(name, artist)
+	if err != nil {
+		return nil, retryLater(err)
+	}
+	if !found {
+		return nil, nil
+	}
+	return &metadata.AlbumInfoResponse{
+		Name: name,
+		MBID: releaseGroupID,
+		URL:  "https://musicbrainz.org/release-group/" + releaseGroupID,
+	}, nil
 }
 
 func newClient(doer shared.HTTPDoer, cache shared.CacheBackend, now func() time.Time, sleep func(time.Duration)) *pluginClient {
@@ -122,11 +158,18 @@ func (c *pluginClient) caaImages(kind, id string) ([]metadata.ImageInfo, bool, e
 		return nil, false, nil
 	}
 	target := caaURL + kind + "/" + url.PathEscape(strings.ToLower(id))
+	target += "/"
 	response, err := c.http.Send(host.HTTPRequest{
 		Method:  "GET",
 		URL:     target,
 		Headers: apiHeaders(),
 	}, []string{"coverartarchive.org"})
+	if err != nil && (kind == "release" || kind == "release-group") {
+		var redirect *shared.RedirectError
+		if errors.As(err, &redirect) {
+			response, err = c.followCAAIndexRedirect(kind, id, redirect.Location)
+		}
+	}
 	if err != nil {
 		var status *shared.StatusError
 		if errors.As(err, &status) && status.StatusCode == 404 {
@@ -147,6 +190,201 @@ func (c *pluginClient) caaImages(kind, id string) ([]metadata.ImageInfo, bool, e
 	}
 	c.cacheResult(key, cachedImages{Found: true, Images: images}, positiveTTL)
 	return images, true, nil
+}
+
+func (c *pluginClient) followCAAIndexRedirect(kind, requestedID, location string) (*host.HTTPResponse, error) {
+	archiveID, firstURL, err := parseCAAArchiveIndexURL(kind, requestedID, location)
+	if err != nil {
+		return nil, err
+	}
+	response, err := c.http.Send(host.HTTPRequest{
+		Method:  "GET",
+		URL:     firstURL,
+		Headers: apiHeaders(),
+	}, []string{"archive.org"})
+	if err == nil {
+		return response, nil
+	}
+	var redirect *shared.RedirectError
+	if errors.As(err, &redirect) {
+		mirrorURL, mirrorHost, validationErr := parseArchiveMirrorURL(archiveID, redirect.Location)
+		if validationErr != nil {
+			return nil, validationErr
+		}
+		response, err = c.http.Send(host.HTTPRequest{
+			Method:  "GET",
+			URL:     mirrorURL,
+			Headers: apiHeaders(),
+		}, []string{mirrorHost})
+		if err == nil {
+			return response, nil
+		}
+	}
+	if isTemporaryFailure(err) {
+		return c.archiveMetadataIndex(archiveID)
+	}
+	return nil, err
+}
+
+func parseCAAArchiveIndexURL(kind, requestedID, location string) (string, string, error) {
+	parsed, err := url.Parse(location)
+	if err != nil || parsed.Scheme != "https" || strings.ToLower(parsed.Hostname()) != "archive.org" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(location, "#") {
+		return "", "", rejectedRedirect("Cover Art Archive returned an unexpected release index redirect")
+	}
+	if port := parsed.Port(); port != "" && port != "443" {
+		return "", "", rejectedRedirect("Cover Art Archive release index redirect used a disallowed port")
+	}
+	const prefix, suffix = "/download/mbid-", "/index.json"
+	if !strings.HasPrefix(parsed.Path, prefix) || !strings.HasSuffix(parsed.Path, suffix) {
+		return "", "", rejectedRedirect("Cover Art Archive returned an unexpected release index path")
+	}
+	archiveID := strings.ToLower(strings.TrimSuffix(strings.TrimPrefix(parsed.Path, prefix), suffix))
+	requestedID = strings.ToLower(requestedID)
+	if !validMBID(archiveID) || (kind == "release" && archiveID != requestedID) {
+		return "", "", rejectedRedirect("Cover Art Archive returned an unexpected release ID")
+	}
+	return archiveID, "https://archive.org/download/mbid-" + archiveID + "/index.json", nil
+}
+
+func parseArchiveMirrorURL(id, location string) (string, string, error) {
+	parsed, err := url.Parse(location)
+	if err != nil || parsed.Scheme != "https" || parsed.User != nil || parsed.Fragment != "" || parsed.RawQuery != "" || parsed.ForceQuery || strings.Contains(location, "#") {
+		return "", "", rejectedRedirect("Internet Archive returned an unexpected release index redirect")
+	}
+	if port := parsed.Port(); port != "" && port != "443" {
+		return "", "", rejectedRedirect("Internet Archive release index redirect used a disallowed port")
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	if !validArchiveMirrorHost(hostname) || !validArchiveIndexPath(parsed.Path, id) {
+		return "", "", rejectedRedirect("Internet Archive returned an untrusted release index redirect")
+	}
+	return parsed.String(), hostname, nil
+}
+
+func (c *pluginClient) archiveMetadataIndex(id string) (*host.HTTPResponse, error) {
+	response, err := c.http.Send(host.HTTPRequest{
+		Method:  "GET",
+		URL:     "https://archive.org/metadata/mbid-" + id,
+		Headers: apiHeaders(),
+	}, []string{"archive.org"})
+	if err != nil {
+		return nil, err
+	}
+	var payload archiveMetadataResponse
+	if err := json.Unmarshal(response.Body, &payload); err != nil {
+		return nil, &shared.RetryError{After: 5 * time.Second, Cause: errors.New("invalid Internet Archive metadata JSON")}
+	}
+	if !validArchiveIndexDir(payload.Dir, id) || !hasArchiveIndexFile(payload.Files) {
+		return nil, &shared.RetryError{After: 5 * time.Second, Cause: errors.New("Internet Archive metadata did not identify the expected index.json")}
+	}
+
+	var lastErr error
+	seen := map[string]struct{}{}
+	attempts := 0
+	for _, candidate := range []string{payload.D1, payload.D2, payload.Server} {
+		hostname := validArchiveMetadataHost(candidate)
+		if hostname == "" {
+			continue
+		}
+		if _, exists := seen[hostname]; exists {
+			continue
+		}
+		seen[hostname] = struct{}{}
+		attempts++
+		mirrorURL := "https://" + hostname + payload.Dir + "/index.json"
+		mirrorResponse, mirrorErr := c.http.Send(host.HTTPRequest{
+			Method:  "GET",
+			URL:     mirrorURL,
+			Headers: apiHeaders(),
+		}, []string{hostname})
+		if mirrorErr == nil {
+			return mirrorResponse, nil
+		}
+		lastErr = mirrorErr
+		if attempts == 2 {
+			break
+		}
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, &shared.RetryError{After: 5 * time.Second, Cause: errors.New("Internet Archive metadata contained no usable mirror host")}
+}
+
+func isTemporaryFailure(err error) bool {
+	var retry *shared.RetryError
+	return errors.As(err, &retry)
+}
+
+func validArchiveIndexPath(path, id string) bool {
+	for _, prefix := range []string{"/0/items/mbid-", "/2/items/mbid-"} {
+		if path == prefix+id+"/index.json" {
+			return true
+		}
+	}
+	return false
+}
+
+func validArchiveIndexDir(path, id string) bool {
+	suffix := "/items/mbid-" + id
+	if !strings.HasSuffix(path, suffix) {
+		return false
+	}
+	shard := strings.TrimPrefix(strings.TrimSuffix(path, suffix), "/")
+	if shard == "" {
+		return false
+	}
+	for _, r := range shard {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func validArchiveMirrorHost(host string) bool {
+	host = strings.ToLower(host)
+	return host != "" && host != "archive.org" && strings.HasSuffix(host, ".archive.org")
+}
+
+func validArchiveMetadataHost(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	parsed, err := url.Parse("https://" + raw)
+	if err != nil || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Port() != "" {
+		return ""
+	}
+	hostname := strings.ToLower(parsed.Hostname())
+	if !validArchiveMirrorHost(hostname) || !strings.EqualFold(parsed.Host, hostname) {
+		return ""
+	}
+	return hostname
+}
+
+func hasArchiveIndexFile(files []archiveMetadataFile) bool {
+	for _, file := range files {
+		if file.Name == "index.json" {
+			return true
+		}
+	}
+	return false
+}
+
+type archiveMetadataResponse struct {
+	D1     string                `json:"d1"`
+	D2     string                `json:"d2"`
+	Server string                `json:"server"`
+	Dir    string                `json:"dir"`
+	Files  []archiveMetadataFile `json:"files"`
+}
+
+type archiveMetadataFile struct {
+	Name string `json:"name"`
+}
+
+func rejectedRedirect(message string) error {
+	return &shared.RetryError{After: 5 * time.Second, Cause: errors.New(message)}
 }
 
 type caaResponse struct {

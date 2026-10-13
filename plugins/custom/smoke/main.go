@@ -46,6 +46,12 @@ type albumImagesResponse struct {
 	Images []imageInfo `json:"images"`
 }
 
+type albumInfoResponse struct {
+	Name string `json:"name"`
+	MBID string `json:"mbid"`
+	URL  string `json:"url"`
+}
+
 type artistURLResponse struct {
 	URL string `json:"url"`
 }
@@ -269,6 +275,13 @@ func run(caaPath, wikimediaPath string) error {
 		return fmt.Errorf("unexpected CAA manifest name %q", caaManifest.Name)
 	}
 	album := albumRequest{MBID: albumMBID, Name: "Mock Album", Artist: "Mock Artist"}
+	var albumInfo albumInfoResponse
+	if err := caa.call("nd_get_album_info", album, &albumInfo); err != nil {
+		return err
+	}
+	if albumInfo.Name != album.Name || albumInfo.MBID != album.MBID || albumInfo.URL != "https://musicbrainz.org/release/"+album.MBID {
+		return fmt.Errorf("CAA album-info export returned incomplete metadata: %#v", albumInfo)
+	}
 	var albumResult albumImagesResponse
 	var durations []time.Duration
 	for i := 0; i < 100; i++ {
@@ -285,7 +298,7 @@ func run(caaPath, wikimediaPath string) error {
 		return fmt.Errorf("CAA host-cache warm calls issued %d HTTP requests, want 1", got)
 	}
 	sort.Slice(durations[1:], func(i, j int) bool { return durations[1+i] < durations[1+j] })
-	fmt.Printf("coverartarchive: export=nd_get_album_images calls=100 mock_http_calls=%d cold=%s warm_median=%s warm_p95=%s\n", caaHTTP.count(), durations[0], durations[len(durations)/2], durations[95])
+	fmt.Printf("coverartarchive: exports=nd_get_album_info,nd_get_album_images calls=100 mock_http_calls=%d cold=%s warm_median=%s warm_p95=%s\n", caaHTTP.count(), durations[0], durations[len(durations)/2], durations[95])
 
 	wikimediaHTTP, wikimediaCache := &fakeHTTP{}, newFakeCache()
 	wikimedia, wikimediaManifest, err := newRunner(wikimediaPath, wikimediaHTTP, wikimediaCache)

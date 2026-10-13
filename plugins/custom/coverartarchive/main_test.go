@@ -88,6 +88,213 @@ func newTestClient(http shared.HTTPDoer, cache shared.CacheBackend) *pluginClien
 	return newClient(http, cache, time.Now, func(time.Duration) {})
 }
 
+func TestGetAlbumInfoReturnsKnownReleaseWithoutNetwork(t *testing.T) {
+	http := &mockHTTP{handle: func(host.HTTPRequest) (*host.HTTPResponse, error) {
+		t.Fatal("known MBID lookup should not issue a metadata request")
+		return nil, nil
+	}}
+	client := newTestClient(http, newMemoryCache())
+	result, err := client.getAlbumInfo(metadata.AlbumRequest{MBID: strings.ToUpper(testMBID), Name: "Album"})
+	if err != nil || result == nil {
+		t.Fatalf("expected album info for known release, result=%#v err=%v", result, err)
+	}
+	if result.MBID != testMBID || result.Name != "Album" || result.URL != "https://musicbrainz.org/release/"+testMBID {
+		t.Fatalf("unexpected album info: %#v", result)
+	}
+	if got := len(http.snapshot()); got != 0 {
+		t.Fatalf("known MBID should be network-free, got %d requests", got)
+	}
+}
+
+func TestGetAlbumInfoUsesExactReleaseGroupMatch(t *testing.T) {
+	http := &mockHTTP{handle: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		if !strings.Contains(request.URL, "musicbrainz.org") {
+			t.Fatalf("unexpected provider request %q", request.URL)
+		}
+		return response(200, `{"release-groups":[{"id":"12345678-1234-1234-1234-123456789abc","title":"Ferrari","artist-credit-phrase":"Bebe Rexha"}]}`), nil
+	}}
+	client := newTestClient(http, newMemoryCache())
+	result, err := client.getAlbumInfo(metadata.AlbumRequest{Name: "Ferrari", Artist: "Bebe Rexha"})
+	if err != nil || result == nil {
+		t.Fatalf("expected exact release-group info, result=%#v err=%v", result, err)
+	}
+	if result.MBID != testMBID || result.URL != "https://musicbrainz.org/release-group/"+testMBID {
+		t.Fatalf("unexpected release-group info: %#v", result)
+	}
+}
+
+func TestReleaseMBIDFollowsOnlyExactCAAAndArchiveRedirects(t *testing.T) {
+	archiveIndex := "https://archive.org/download/mbid-" + testMBID + "/index.json"
+	cdnIndex := "https://dn711103.ca.archive.org/0/items/mbid-" + testMBID + "/index.json"
+	http := &mockHTTP{handle: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch request.URL {
+		case "https://coverartarchive.org/release/" + testMBID + "/":
+			return &host.HTTPResponse{StatusCode: 307, Headers: map[string]string{"Location": archiveIndex}}, nil
+		case archiveIndex:
+			return &host.HTTPResponse{StatusCode: 302, Headers: map[string]string{"Location": cdnIndex}}, nil
+		case cdnIndex:
+			return response(200, `{"images":[{"front":true,"image":"https://archive.org/download/caa/front.jpg"}]}`), nil
+		default:
+			t.Fatalf("unexpected request %q", request.URL)
+			return nil, nil
+		}
+	}}
+	client := newTestClient(http, newMemoryCache())
+	result, err := client.getAlbumImages(metadata.AlbumRequest{MBID: testMBID})
+	if err != nil || result == nil || len(result.Images) != 1 {
+		t.Fatalf("expected release artwork, result=%#v err=%v", result, err)
+	}
+	requests := http.snapshot()
+	if len(requests) != 3 {
+		t.Fatalf("expected three explicitly validated requests, got %#v", requests)
+	}
+	for _, request := range requests {
+		if !request.NoFollowRedirects {
+			t.Fatalf("implicit redirects must remain disabled: %#v", request)
+		}
+	}
+}
+
+func TestReleaseGroupRedirectCanResolveToItsMemberRelease(t *testing.T) {
+	groupID := testMBID
+	releaseID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	archiveIndex := "https://archive.org/download/mbid-" + releaseID + "/index.json"
+	cdnIndex := "https://dn711103.ca.archive.org/0/items/mbid-" + releaseID + "/index.json"
+	http := &mockHTTP{handle: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch request.URL {
+		case "https://coverartarchive.org/release-group/" + groupID + "/":
+			return &host.HTTPResponse{StatusCode: 307, Headers: map[string]string{"Location": archiveIndex}}, nil
+		case archiveIndex:
+			return &host.HTTPResponse{StatusCode: 302, Headers: map[string]string{"Location": cdnIndex}}, nil
+		case cdnIndex:
+			return response(200, `{"images":[{"front":true,"image":"https://coverartarchive.org/release/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/1.jpg"}]}`), nil
+		default:
+			t.Fatalf("unexpected request %q", request.URL)
+			return nil, nil
+		}
+	}}
+	client := newTestClient(http, newMemoryCache())
+	images, found, err := client.caaImages("release-group", groupID)
+	if err != nil || !found || len(images) != 1 {
+		t.Fatalf("expected group art from its member release, images=%#v found=%v err=%v", images, found, err)
+	}
+	if got := len(http.snapshot()); got != 3 {
+		t.Fatalf("expected CAA, archive index, and CDN requests, got %d", got)
+	}
+}
+
+func TestArchiveMetadataMirrorsRecoverIndexAfter503(t *testing.T) {
+	releaseID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	groupID := testMBID
+	archiveIndex := "https://archive.org/download/mbid-" + releaseID + "/index.json"
+	metadataURL := "https://archive.org/metadata/mbid-" + releaseID
+	mirrorIndex := "https://ia600801.us.archive.org/2/items/mbid-" + releaseID + "/index.json"
+	var archiveIndexCalls int
+	http := &mockHTTP{handle: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+		switch request.URL {
+		case "https://coverartarchive.org/release-group/" + groupID + "/":
+			return &host.HTTPResponse{StatusCode: 307, Headers: map[string]string{"Location": archiveIndex}}, nil
+		case archiveIndex:
+			archiveIndexCalls++
+			return response(503, `{}`), nil
+		case metadataURL:
+			return response(200, `{"d1":"ia600801.us.archive.org","d2":"ia800801.us.archive.org","server":"ia800801.us.archive.org","dir":"/2/items/mbid-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","files":[{"name":"index.json"}]}`), nil
+		case mirrorIndex:
+			return response(200, `{"images":[{"front":true,"image":"https://coverartarchive.org/release/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/1.jpg","thumbnails":{"500":"https://coverartarchive.org/release/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/1-500.jpg"}}]}`), nil
+		default:
+			t.Fatalf("unexpected request %q", request.URL)
+			return nil, nil
+		}
+	}}
+	client := newTestClient(http, newMemoryCache())
+	images, found, err := client.caaImages("release-group", groupID)
+	if err != nil || !found || len(images) != 2 {
+		t.Fatalf("expected artwork from Internet Archive mirror, images=%#v found=%v err=%v", images, found, err)
+	}
+	if archiveIndexCalls != 2 {
+		t.Fatalf("expected one bounded retry for 503, got %d calls", archiveIndexCalls)
+	}
+	requests := http.snapshot()
+	if len(requests) != 5 || requests[3].URL != metadataURL || requests[4].URL != mirrorIndex {
+		t.Fatalf("unexpected mirror fallback requests: %#v", requests)
+	}
+	for _, request := range requests {
+		if !request.NoFollowRedirects {
+			t.Fatalf("implicit redirects must remain disabled: %#v", request)
+		}
+	}
+}
+
+func TestArchiveMetadataFallbackRejectsUntrustedHostsAndPaths(t *testing.T) {
+	cases := map[string]string{
+		"untrusted hosts": `{"d1":"archive.org.evil.test","d2":"attacker.example","server":"attacker.example","dir":"/2/items/mbid-` + testMBID + `","files":[{"name":"index.json"}]}`,
+		"wrong item path": `{"d1":"ia600801.us.archive.org","d2":"ia800801.us.archive.org","dir":"/2/items/mbid-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa","files":[{"name":"index.json"}]}`,
+	}
+	for name, payload := range cases {
+		t.Run(name, func(t *testing.T) {
+			http := &mockHTTP{handle: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				if request.URL != "https://archive.org/metadata/mbid-"+testMBID {
+					t.Fatalf("unexpected mirror request for invalid metadata: %q", request.URL)
+				}
+				return response(200, payload), nil
+			}}
+			client := newTestClient(http, newMemoryCache())
+			result, err := client.archiveMetadataIndex(testMBID)
+			if err == nil || result != nil {
+				t.Fatalf("invalid archive metadata should fail closed, result=%#v err=%v", result, err)
+			}
+			if got := len(http.snapshot()); got != 1 {
+				t.Fatalf("invalid mirror data caused an extra request, calls=%d", got)
+			}
+		})
+	}
+}
+
+func TestReleaseMBIDRejectsUnexpectedRedirectTargets(t *testing.T) {
+	archiveIndex := "https://archive.org/download/mbid-" + testMBID + "/index.json"
+	for name, firstTarget := range map[string]string{
+		"wrong scheme":    strings.Replace(archiveIndex, "https://", "http://", 1),
+		"wrong host":      "https://archive.org.evil.test/download/mbid-" + testMBID + "/index.json",
+		"wrong MBID path": "https://archive.org/download/mbid-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa/index.json",
+	} {
+		t.Run(name, func(t *testing.T) {
+			http := &mockHTTP{handle: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				return &host.HTTPResponse{StatusCode: 307, Headers: map[string]string{"Location": firstTarget}}, nil
+			}}
+			client := newTestClient(http, newMemoryCache())
+			result, err := client.getAlbumImages(metadata.AlbumRequest{MBID: testMBID})
+			if err == nil || result != nil {
+				t.Fatalf("unexpected redirect target should fail closed, result=%#v err=%v", result, err)
+			}
+			if got := len(http.snapshot()); got != 1 {
+				t.Fatalf("untrusted target was requested, calls=%d", got)
+			}
+		})
+	}
+	for name, cdnTarget := range map[string]string{
+		"wrong CDN host":  "https://archive.org.evil.test/0/items/mbid-" + testMBID + "/index.json",
+		"wrong CDN path":  "https://dn711103.ca.archive.org/download/mbid-" + testMBID + "/index.json",
+		"wrong CDN query": "https://dn711103.ca.archive.org/0/items/mbid-" + testMBID + "/index.json?x=1",
+	} {
+		t.Run(name, func(t *testing.T) {
+			http := &mockHTTP{handle: func(request host.HTTPRequest) (*host.HTTPResponse, error) {
+				if request.URL == "https://coverartarchive.org/release/"+testMBID+"/" {
+					return &host.HTTPResponse{StatusCode: 307, Headers: map[string]string{"Location": archiveIndex}}, nil
+				}
+				return &host.HTTPResponse{StatusCode: 302, Headers: map[string]string{"Location": cdnTarget}}, nil
+			}}
+			client := newTestClient(http, newMemoryCache())
+			result, err := client.getAlbumImages(metadata.AlbumRequest{MBID: testMBID})
+			if err == nil || result != nil {
+				t.Fatalf("unexpected CDN redirect should fail closed, result=%#v err=%v", result, err)
+			}
+			if got := len(http.snapshot()); got != 2 {
+				t.Fatalf("untrusted CDN target was requested, calls=%d", got)
+			}
+		})
+	}
+}
+
 func TestKnownMBIDPrefersFrontAndWarmsCacheFor100Calls(t *testing.T) {
 	http := &mockHTTP{handle: func(host.HTTPRequest) (*host.HTTPResponse, error) {
 		return response(200, `{"images":[{"front":false,"image":"https://archive.org/download/caa/back.jpg"},{"front":true,"image":"https://archive.org/download/caa/front.jpg","thumbnails":{"250":"https://archive.org/download/caa/250.jpg","500":"https://archive.org/download/caa/500.jpg","1200":"https://archive.org/download/caa/1200.jpg"}}]}`), nil

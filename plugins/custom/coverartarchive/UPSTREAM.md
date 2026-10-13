@@ -14,3 +14,6 @@ Local changes:
 - Total and per-request deadlines, response and request size limits, redirect rejection, bounded retries, MusicBrainz pacing, and provider-specific error handling.
 - Positive and negative host-cache entries with TTLs and a 64-entry, 32 KiB-per-entry bound.
 - Deterministic host-mocked tests and a WASM smoke path using a fake host.
+- Navidrome `GetAlbumInfo` support to unlock the subsequent album-image refresh call.
+- A strict, bounded exception for the official Cover Art Archive release redirect through the matching Internet Archive index and CDN.
+- Release-group redirects may map to a verified member-release MBID; retryable Internet Archive download failures can fall back to at most two mirror hosts discovered through the item metadata API.

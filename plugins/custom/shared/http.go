@@ -99,7 +99,7 @@ func (c *HTTPClient) Send(request host.HTTPRequest, allowedHosts []string) (*hos
 		}
 		switch {
 		case response.StatusCode >= 300 && response.StatusCode < 400:
-			return nil, &RedirectError{StatusCode: response.StatusCode}
+			return nil, &RedirectError{StatusCode: response.StatusCode, Location: headerValue(response.Headers, "Location")}
 		case response.StatusCode == 429:
 			return nil, &RetryError{After: RetryAfter(response.Headers, c.Now()), Cause: errors.New("provider rate limited the request")}
 		case response.StatusCode >= 500:
@@ -119,6 +119,15 @@ func (c *HTTPClient) Send(request host.HTTPRequest, allowedHosts []string) (*hos
 		}
 	}
 	return nil, &RetryError{After: time.Second, Cause: errors.New("provider retry exhausted")}
+}
+
+func headerValue(headers map[string]string, key string) string {
+	for name, value := range headers {
+		if strings.EqualFold(name, key) {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func ValidateHTTPSURL(raw string, allowedHosts []string) (*url.URL, error) {
@@ -164,6 +173,7 @@ func (e *RetryError) Unwrap() error {
 
 type RedirectError struct {
 	StatusCode int32
+	Location   string
 }
 
 func (e *RedirectError) Error() string {

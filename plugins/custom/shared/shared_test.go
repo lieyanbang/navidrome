@@ -130,12 +130,15 @@ func TestBoundedCacheNilBackendFailsClosed(t *testing.T) {
 
 func TestHTTPClientDisablesRedirectsAndBoundsResponse(t *testing.T) {
 	now := time.Now()
-	http := &testHTTP{response: &host.HTTPResponse{StatusCode: 302, Headers: map[string]string{"Location": "https://example.org"}}}
+	http := &testHTTP{response: &host.HTTPResponse{StatusCode: 302, Headers: map[string]string{"location": " https://example.org/target "}}}
 	client := NewHTTPClient(http, now.Add(5*time.Second), func() time.Time { return now }, func(time.Duration) {})
 	_, err := client.Send(host.HTTPRequest{Method: "GET", URL: "https://api.example.org/lookup"}, []string{"api.example.org"})
 	var redirect *RedirectError
 	if !errors.As(err, &redirect) {
 		t.Fatalf("expected blocked redirect, got %v", err)
+	}
+	if redirect.Location != "https://example.org/target" {
+		t.Fatalf("expected redirect target to be preserved for explicit validation, got %q", redirect.Location)
 	}
 	if len(http.requests) != 1 || !http.requests[0].NoFollowRedirects {
 		t.Fatalf("unexpected redirect behavior: %#v", http.requests)

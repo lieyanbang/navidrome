@@ -1,50 +1,64 @@
 # Navidrome metadata plugin acceptance
 
-Date: 2026-10-13 UTC
-Branch: `codex/onecloud-webdav-worker`
-OneCloud: `192.168.137.11` (Debian 12, ARMv7)
+Observed: 2026-10-13 10:29 UTC
+Branch: codex/onecloud-webdav-worker
+OneCloud: 192.168.137.11 (Debian 12, ARMv7)
+Repository base: d13dbb3016eb69a14d1fd9b3a3a1557f6031dd2f
 
 ## Phase status
 
 | Phase | Status | Evidence |
 |---|---|---|
-| 0 — Audit and baseline | PASS | Recorded branch, dirty user files, upstream, PDK/ABI, ARMv7 runtime, mounted data volume, service PIDs/ports, empty plugin folder, and effective agent defaults before changes. |
-| 1 — Cover Art Archive | PASS | Maintained Go source imported with MIT attribution and pinned upstream revision; MBID-first and exact-name fallback, bounded HTTP/cache behavior, safe URLs, front-art preference, and deterministic provider tests. |
-| 2 — Wikimedia | PASS | New production Go plugin derived from the unchanged official example; safe SPARQL literals and URL validation, exact candidate selection, shared bounded cache, English default, fallback, and deterministic host-mocked tests. |
-| 3 — Validate and build | PASS | Formatting, tests, vet, race tests, tagged root regressions, reproducible WASI builds, package inspection, and real Extism/Wazero export smoke all passed. ARMv7 Navidrome loaded both packages. |
-| 4 — Deploy and activate | BLOCKED | Both 1.1.1 plugins are installed, enabled, loaded, and healthy. Continuous playback was not proven: the UI had a one-item player badge before restart; afterward the server queue table was empty, although a player heartbeat remained recent. No playback or queue edits were made during validation. |
-| 5 — Final acceptance | BLOCKED | Wikimedia returned and persisted a Wikipedia URL, biography, and Commons image for an existing artist. The installed CAA plugin was invoked for an existing album, but the provider path backed off and no cover was persisted. The user-authenticated UI was available, so no login-dependent check was skipped. |
+| 0 — Audit and baseline | PASS | Verified dirty files and branch before changes, pinned upstream CAA revision, PDK/ABI and ARMv7 host support, mounted data volume, active services, config, plugin directory, agent order, toolchain, and existing plugin packages. |
+| 1 — Cover Art Archive | PASS | Maintained Go source with MIT attribution; added album-info capability, validated release/release-group identifiers and redirects, and a bounded Internet Archive metadata/mirror fallback for transient download failures. Deterministic provider and security tests pass. |
+| 2 — Wikimedia | PASS | Maintained plugin is derived from the unchanged official example. Existing URL, biography, image, SPARQL escaping, matching, bounded cache, and failure-path test coverage pass. Live artist metadata was persisted on OneCloud. |
+| 3 — Validate and build | PASS | Go tests, vet, race tests, broader tagged host regressions, reproducible WASI packaging, package inspection, and Extism/Wazero host smoke passed. Final smoke used the packaged 1.1.3 CAA and 1.1.1 Wikimedia artifacts. |
+| 4 — Deploy and activate | PARTIAL | Both final packages match the deployed hashes, are enabled and loaded with the intended agent order, and service health is good. Continuous client playback after the restart was not verified. |
+| 5 — Final acceptance | PARTIAL | Wikimedia metadata persisted. The final CAA source-level live probe returned four image URLs, but a final authenticated metadata refresh through the installed 1.1.3 plugin could not be run; that exact check is SKIPPED_LOGIN_REQUIRED, not PASS. |
+
+## Why the plugins appeared ineffective
+
+- Wikimedia did run: the existing Bebe Rexha record has a 1,860-character biography, an English Wikipedia URL, a Commons image URL, and item_artwork.source=external:wikimedia. This agent supplies artist metadata; it does not supply album covers. Artwork priority or cached display can also make a successful artist refresh less visible.
+- CAA 1.1.1 exposed only album images. Navidrome asks an external metadata provider for album info first and returns early when it is not found, so that version never reached its image method. Version 1.1.2 added the missing album-info capability and the authenticated UI refresh stored a MusicBrainz release-group URL for Ferrari.
+- That 1.1.2 refresh still produced no cover: the CAA release-group response redirected to a member release and the implementation rejected that valid mapping; download paths also showed transient upstream failures. Version 1.1.3 validates the mapping and has a bounded metadata/mirror fallback. The final deployed 1.1.3 authenticated refresh remains unverified because the available browser session showed the login form.
 
 ## Source, build, and tests
 
-- Cover Art Archive source is maintained under `plugins/custom/coverartarchive`; upstream Go revision: `0f228002eff4c2a2c03b693216e5775f95eeab04`. The MIT license and attribution are retained. The official Python example and official Wikimedia example remain unchanged.
-- Shared HTTP/cache safety code is under `plugins/custom/shared`; the Wikimedia implementation is under `plugins/custom/wikimedia`; the deterministic package builder is `plugins/custom/build.ps1`; the real WASM host smoke is `plugins/custom/smoke/main.go`.
-- Build command: `pwsh.exe -NoProfile -File .\plugins\custom\build.ps1`. It pins Go 1.27.2, builds each WASI module twice, compares package hashes, and checks the two-entry `.ndp` layout.
-- `go test -count=1 ./...` and `go vet ./...` passed in the shared, Cover Art Archive, and Wikimedia modules. `go test -race -count=1 ./...` passed in all three modules under WSL. The broader command `CGO_ENABLED=1 go test -tags netgo,sqlite_fts5 ./plugins/... ./core/agents/...` passed.
-- The packaged exports ran through the real generated Navidrome host functions and Extism/Wazero with deterministic fake HTTP/cache data. One hundred CAA export calls used one mock HTTP request: cold 16.63 ms, warm median 5.41 ms, warm p95 8.12 ms. Wikimedia URL, biography, and image exports shared two mock HTTP requests. These timings are mocked-host measurements, not live provider latency.
+- CAA upstream revision: 0f228002eff4c2a2c03b693216e5775f95eeab04; MIT license and attribution are retained. The official Python CAA example and official Wikimedia example remain unchanged.
+- Maintained source: plugins/custom/coverartarchive, plugins/custom/wikimedia, and shared host helpers in plugins/custom/shared.
+- Reproducible build: pwsh.exe -NoProfile -File .\plugins\custom\build.ps1 with Go 1.27.2; each WASI module was built twice and package hashes matched.
+- Final commands passed:
+  - go test -count=1 ./..., go vet ./..., and go test -race -count=1 ./... in the shared, CAA, and Wikimedia modules under WSL.
+  - CGO_ENABLED=1 go test -tags netgo,sqlite_fts5 ./plugins/... ./core/agents/....
+  - Packaged WASM smoke through Navidrome host imports and Extism/Wazero.
+- Final mock smoke: 100 CAA calls made one mock HTTP request; cold 18.01 ms, warm median 5.99 ms, warm p95 9.65 ms. Wikimedia URL, biography, and image exports shared two mock HTTP requests. These are mocked-host timings, not provider latency.
+- A temporary live source-level probe (removed after use) called the final CAA provider logic against the live CAA/Internet Archive endpoints; it resolved four image URLs in 3.21 seconds. This was not an invocation through the deployed Navidrome plugin host.
 
 | Package | Version | Size | SHA-256 | Entries |
 |---|---:|---:|---|---|
-| `outputs/plugin-metadata-20261013/artifacts/coverartarchive.ndp` | 1.1.1 | 5,716,051 bytes | `d64e5432b1cc9cab2b3daecc467965fe678d7706793e522159437907953b3066` | `manifest.json`, `plugin.wasm` |
-| `outputs/plugin-metadata-20261013/artifacts/wikimedia.ndp` | 1.1.1 | 5,748,006 bytes | `99bbb9259880cb2d2ec2e74b0389b47a530c13ff975a337df3c7107c953d0b8c` | `manifest.json`, `plugin.wasm` |
+| outputs/plugin-metadata-20261013/artifacts/coverartarchive.ndp | 1.1.3 | 5,747,589 bytes | fb11bad5bee91db320f63f6faac480baaf2dcb395625335cf99dc7d74298db52 | manifest.json, plugin.wasm |
+| outputs/plugin-metadata-20261013/artifacts/wikimedia.ndp | 1.1.1 | 5,749,363 bytes | 175a9a37c9b962543925eb7047939a953b86591adca673f6d282332771fd71ea | manifest.json, plugin.wasm |
 
-## OneCloud deployment
+## OneCloud deployment and health
 
-- `/srv/onecloud-data` was mounted read-write before writes. The packages are installed in `/srv/onecloud-data/navidrome/plugins`, owned by `navidrome:navidrome`, mode `0640`. The live hashes match the table above.
-- Navidrome reports both plugins enabled at version 1.1.1 with `cache,http` permissions, no write access, and no plugin load error. Startup logs report both `MetadataAgent` capabilities loaded. The effective agent order is `coverartarchive,wikimedia,local`; existing local metadata behavior remains enabled.
-- `/etc/navidrome/navidrome.env` has only two task additions: `ND_PLUGINS_ENABLED=true` and `ND_AGENTS=coverartarchive,wikimedia,local`. The original file is backed up at `/srv/onecloud-data/navidrome/backups/navidrome.env.pre-plugin-metadata-20261013` (mode `0600`, SHA-256 `9085b862275435a6a4aa03f4e015a6d927e9b5f2eab65f013ef5dd51ef9403de`). The previous 1.1.0 packages are backed up under `/srv/onecloud-data/navidrome/backups/plugins-before-1.1.1/`.
-- Navidrome was gracefully restarted to load configuration and then the updated 1.1.1 packages. Final PID: `25097`. WebDAV PID `27423` and printer PID `8570` did not change. Navidrome is active, `/ping` succeeds, listeners `13326`, `13325`, and `8080` remain present, and `192.168.137.1:13324` is reachable from OneCloud. The Navidrome core binary was not replaced.
-- RAM total was 1,004,892 KiB. Final Navidrome RSS was 351,260 KiB, available RAM 524,288 KiB. A 15-second idle sample measured 0.3% process CPU with stable RSS. No OOM events were found. The Navidrome cache tree is 161 MiB; four files totaling 126,501 bytes were written or updated during the task window. The mounted data volume still had 19 GiB available.
-- A warning that artwork settings differ from the last full reprocess remains. No full artwork reprocess was run, so existing artwork files/caches were not bulk-regenerated. Player heartbeat was present in the recent window, but `playqueue` had zero rows after restart; uninterrupted playback is therefore unverified.
+- Data volume /srv/onecloud-data was mounted read-write. Plugin directory: /srv/onecloud-data/navidrome/plugins. Both packages are owned by navidrome:navidrome, mode 0640; installed SHA-256 hashes match the table.
+- Current plugin list: coverartarchive 1.1.3 enabled=true, wikimedia 1.1.1 enabled=true, neither has a last error. Effective order is coverartarchive,wikimedia,local; permissions are cache,http. Environment additions remain ND_PLUGINS_ENABLED=true and ND_AGENTS=coverartarchive,wikimedia,local.
+- Navidrome is active, PID 6025; http://192.168.137.11:13326/ping returned HTTP 200. The service binds the LAN address, so a loopback-only probe to 127.0.0.1:13326 fails by design; no service change was needed.
+- Listeners: Navidrome 13326, WebDAV 13325 (PID 27423), printer 8080 (PID 8570). The Arasaka worker 192.168.137.1:13324 is reachable. WebDAV and printer PIDs remained unchanged through deployment.
+- Final 15-second idle sample: Navidrome RSS stayed at 259,352 KiB; process CPU was 0.33%. Total RAM 1,004,892 KiB, available RAM 623,520 KiB; data volume had 18.77 GiB free. No kernel OOM events and no Navidrome error-level journal entries were found in the checked windows.
+- No full artwork reprocess was run. Continuous playback after the graceful Navidrome restart remains unverified; validation did not change the player queue or start playback.
 
-## Live metadata result and limitation
+## 503 diagnosis and fallback
 
-- Through the existing authenticated UI, the Wikimedia agent refreshed an existing `Bebe Rexha` artist. The database now has a biography (1,860 characters), an `en.wikipedia.org` external URL, and a `commons.wikimedia.org` image URL. The biography remained visible in the UI after the final Navidrome restart.
-- The CAA agent was invoked for the existing `Ferrari` album, which has no stored MusicBrainz ID. The album still has no external image or `external_info_updated_at`. A single read-only MusicBrainz probe returned HTTP 503 with `Retry-After: 0`; the plugin manager also recorded provider-backoff circuit-breaker warnings. The shared retry parser was hardened so non-positive `Retry-After` values use the 5-second conservative default instead of a one-second retry. The final live attempt still received provider backoff, so CAA live image acceptance remains blocked by the external provider state.
-- No severe Navidrome errors or OOM events were observed. Four provider-backoff notifications occurred during the final validation window; no broad retry loop was started.
+The observed CAA release-group request returned a 307 to a member-release archive item. Internet Archive /download returned a transient 503 in the same validation window; its metadata endpoint then returned the item directory and mirror names, and the validated index/image mirrors returned 200. CAA 1.1.3 uses that metadata route and at most two allow-listed archive mirrors after retryable download failures. The official CAA API documents redirect/index behavior and release-group metadata ([Cover Art Archive API](https://musicbrainz.org/doc/Cover_Art_Archive)); the Internet Archive documents /metadata/{identifier} and its d1, d2, and dir fields ([Item Metadata API: Read](https://doc-tools.readthedocs.io/en/ia-test-gsod/md-read.html)).
 
-## Recovery
+If the Internet Archive metadata API and its mirrors also fail persistently, TheAudioDB is an independent candidate, not a deployed fallback. Its free API documents album search by artist/title and a 30-request-per-minute limit, and its shared routing can itself return 503 ([API documentation](https://www.theaudiodb.com/free_music_api)). Its terms require source attribution for custom artwork and restrict third-party content ([terms](https://www.theaudiodb.com/docs_terms_of_use.php)). It was not added because the in-scope IA metadata/mirror fallback succeeded in the live source probe and the task is limited to the two requested plugins.
 
-To restore the previous runtime, restore the environment backup to `/etc/navidrome/navidrome.env` with owner `root:navidrome` and mode `0640`; restore both `.ndp` files from `backups/plugins-before-1.1.1/` to the plugin directory with owner `navidrome:navidrome` and mode `0640`; run `navidrome plugin rescan`, re-enable both plugin IDs if the rescan marks changed files disabled, then restart only `navidrome.service`.
+## Backups and recovery
 
-Unrelated pre-existing edits and untracked user files, including the existing `docs/IMPLEMENTATION.md` appendix, `docs/TASK.md`, and `outputs/lan-access-20261013/`, were preserved.
+- Original packages: /srv/onecloud-data/navidrome/backups/plugins-before-metadata-fix-20261013/.
+- Packages immediately before CAA 1.1.3: /srv/onecloud-data/navidrome/backups/plugins-before-caa-mirror-fix-20261013/ (CAA 1.1.2 and Wikimedia 1.1.1).
+- Environment backup: /srv/onecloud-data/navidrome/backups/navidrome.env.pre-plugin-metadata-20261013.
+- To roll back only CAA, restore its 1.1.2 backup into the plugin directory as coverartarchive.ndp, retain the current Wikimedia package, run navidrome plugin rescan, explicitly enable coverartarchive if rescan disabled the changed package, and gracefully restart only navidrome.service. Restore the environment backup only if reverting the plugin enablement/agent settings too.
+
+Unrelated user changes were preserved: the 10-11 appendix in docs/IMPLEMENTATION.md, untracked docs/TASK.md, and outputs/lan-access-20261013/.
