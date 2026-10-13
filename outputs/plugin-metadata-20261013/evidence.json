@@ -1,0 +1,153 @@
+{
+  "task": "Navidrome metadata plugins: Cover Art Archive + Wikimedia",
+  "observed_at_utc": "2026-10-13T04:08:54Z",
+  "repository": {
+    "branch": "codex/onecloud-webdav-worker",
+    "base_commit": "1188b82bf2e2fab8e2b42fc5b4d08d7f6fceba7d",
+    "upstream_caa_commit": "0f228002eff4c2a2c03b693216e5775f95eeab04",
+    "preexisting_user_changes_preserved": [
+      "docs/IMPLEMENTATION.md appendix",
+      "docs/TASK.md",
+      "outputs/lan-access-20261013/"
+    ]
+  },
+  "phase_status": {
+    "phase_0": "PASS",
+    "phase_1": "PASS",
+    "phase_2": "PASS",
+    "phase_3": "PASS",
+    "phase_4": "BLOCKED",
+    "phase_5": "BLOCKED"
+  },
+  "build": {
+    "go_version": "go1.27.2",
+    "target": "wasip1/wasm",
+    "builder": "plugins/custom/build.ps1",
+    "reproducible_two_builds": true,
+    "package_entries": ["manifest.json", "plugin.wasm"],
+    "artifacts": [
+      {
+        "id": "coverartarchive",
+        "version": "1.1.1",
+        "path": "outputs/plugin-metadata-20261013/artifacts/coverartarchive.ndp",
+        "size_bytes": 5716051,
+        "sha256": "d64e5432b1cc9cab2b3daecc467965fe678d7706793e522159437907953b3066"
+      },
+      {
+        "id": "wikimedia",
+        "version": "1.1.1",
+        "path": "outputs/plugin-metadata-20261013/artifacts/wikimedia.ndp",
+        "size_bytes": 5748006,
+        "sha256": "99bbb9259880cb2d2ec2e74b0389b47a530c13ff975a337df3c7107c953d0b8c"
+      }
+    ],
+    "tests": {
+      "go_test_custom_modules": "PASS",
+      "go_vet_custom_modules": "PASS",
+      "go_race_custom_modules_wsl": "PASS",
+      "root_plugins_and_agents_with_netgo_sqlite_fts5": "PASS",
+      "extism_wazero_wasm_smoke": "PASS"
+    },
+    "mock_smoke_metrics": {
+      "caa_calls": 100,
+      "caa_mock_http_calls": 1,
+      "caa_cold_ms": 16.63,
+      "caa_warm_median_ms": 5.41,
+      "caa_warm_p95_ms": 8.12,
+      "wikimedia_exports": [
+        "nd_get_artist_url",
+        "nd_get_artist_biography",
+        "nd_get_artist_images"
+      ],
+      "wikimedia_mock_http_calls": 2,
+      "shared_cache": true
+    }
+  },
+  "onecloud": {
+    "host": "192.168.137.11",
+    "os": "Debian 12 ARMv7",
+    "data_volume_mounted_rw": true,
+    "plugins_directory": "/srv/onecloud-data/navidrome/plugins",
+    "plugins": [
+      {
+        "id": "coverartarchive",
+        "version": "1.1.1",
+        "enabled": true,
+        "last_error": false,
+        "permissions": ["cache", "http"],
+        "sha256": "d64e5432b1cc9cab2b3daecc467965fe678d7706793e522159437907953b3066"
+      },
+      {
+        "id": "wikimedia",
+        "version": "1.1.1",
+        "enabled": true,
+        "last_error": false,
+        "permissions": ["cache", "http"],
+        "sha256": "99bbb9259880cb2d2ec2e74b0389b47a530c13ff975a337df3c7107c953d0b8c"
+      }
+    ],
+    "agent_order": ["coverartarchive", "wikimedia", "local"],
+    "environment_additions": {
+      "ND_PLUGINS_ENABLED": "true",
+      "ND_AGENTS": "coverartarchive,wikimedia,local"
+    },
+    "environment_backup": {
+      "path": "/srv/onecloud-data/navidrome/backups/navidrome.env.pre-plugin-metadata-20261013",
+      "mode": "0600",
+      "sha256": "9085b862275435a6a4aa03f4e015a6d927e9b5f2eab65f013ef5dd51ef9403de"
+    },
+    "old_plugin_backup_directory": "/srv/onecloud-data/navidrome/backups/plugins-before-1.1.1",
+    "services": {
+      "navidrome": {"active": true, "pid": 25097, "rss_kib": 351260, "http_ping": "success"},
+      "webdav": {"active": true, "pid": 27423, "pid_unchanged": true},
+      "printer": {"active": true, "pid": 8570, "pid_unchanged": true},
+      "worker_192_168_137_1_13324": "reachable"
+    },
+    "listening_ports": [13325, 13326, 8080],
+    "memory": {
+      "total_kib": 1004892,
+      "available_kib": 524288,
+      "idle_sample_seconds": 15,
+      "idle_cpu_percent": 0.3,
+      "idle_rss_stable": true,
+      "oom_events": 0
+    },
+    "storage": {
+      "data_volume_available_gib_rounded": 19,
+      "navidrome_cache_size": "161M",
+      "cache_files_touched_since_2026_10_13T03_46_39Z": 4,
+      "cache_file_bytes_touched": 126501
+    },
+    "player_continuity": {
+      "recent_player_heartbeats_within_5m": 1,
+      "server_playqueue_rows": 0,
+      "continuous_playback_verified": false,
+      "playback_started_by_validation": false
+    }
+  },
+  "live_metadata": {
+    "wikimedia_artist": {
+      "existing_record": "Bebe Rexha",
+      "ui_refresh_completed": true,
+      "biography_chars": 1860,
+      "external_url_host": "en.wikipedia.org",
+      "image_url_host": "commons.wikimedia.org",
+      "persisted_after_restart": true
+    },
+    "coverartarchive_album": {
+      "existing_record": "Ferrari",
+      "ui_refresh_attempted": true,
+      "musicbrainz_id_present": false,
+      "external_info_updated_at": null,
+      "cover_persisted": false,
+      "provider_probe": {
+        "host": "musicbrainz.org",
+        "http_status": 503,
+        "retry_after_seconds": 0
+      },
+      "post_fix_provider_backoff_events": 4,
+      "acceptance": "BLOCKED_UPSTREAM_BACKOFF"
+    },
+    "login_dependent_check": "NOT_SKIPPED_AUTHENTICATED_UI_USED"
+  }
+}

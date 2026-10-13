@@ -153,3 +153,11 @@ P3 PASS. Local implementation tests, actual Servy deployment, LAN isolation, CI 
 | P3 | PASS | Servy worker/watchdog deployed; 13 live E2E checks passed on the CI ARM artifact; authenticated network path, 192 kb/s MP3, permanent cache, restart, crash recovery, worker-offline playback, watchdog, and test-fixture cleanup verified. |
 | CI | PASS | Actions run `38070572090` succeeded with exactly the Windows AMD64 and Linux ARMv7-A artifacts; both artifacts downloaded, and the ARM artifact was installed and exercised on OneCloud. |
 | P4 | DEFERRED | Primuse manual validation is reserved for the user. |
+
+## 2026-10-13 metadata plugins
+
+- Maintained Go plugins live under `plugins/custom/coverartarchive` and `plugins/custom/wikimedia`. The Cover Art Archive implementation records upstream revision `0f228002eff4c2a2c03b693216e5775f95eeab04` and retains its MIT license; the official examples remain unchanged. Shared deadline, response-size, retry, URL-validation, cache, and provider-throttle helpers live under `plugins/custom/shared`.
+- Build the deterministic WASI packages with `pwsh.exe -NoProfile -File .\plugins\custom\build.ps1`. It pins Go 1.27.2 and emits `outputs/plugin-metadata-20261013/artifacts/{coverartarchive,wikimedia}.ndp`.
+- OneCloud uses `ND_PLUGINS_ENABLED=true` and `ND_AGENTS=coverartarchive,wikimedia,local`, preserving the local agent after the two named providers. The deployed plugins are enabled with only `cache,http` permissions. If an HTTP provider sends a non-positive `Retry-After`, the client falls back to five seconds; valid positive values remain bounded to one minute.
+- Wikimedia returned and persisted an English Wikipedia URL, biography, and Wikimedia Commons image for an existing artist during authenticated UI acceptance. A live Cover Art Archive refresh was attempted, but MusicBrainz returned HTTP 503/backoff and no album cover was persisted; see `outputs/plugin-metadata-20261013/ACCEPTANCE.md` for evidence and limits.
+- The environment and previous plugin packages are backed up under `/srv/onecloud-data/navidrome/backups/`. The acceptance run restarted only `navidrome.service`; WebDAV and printer PIDs remained unchanged. No full artwork reprocess was run. Continuous client playback was not verified after restart.

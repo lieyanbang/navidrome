@@ -1,0 +1,41 @@
+{
+  "name": "wikimedia",
+  "author": "Navidrome; maintained by lieyanbang",
+  "version": "1.1.1",
+  "description": "Artist URLs, biographies, and images from Wikidata, DBpedia, and Wikipedia",
+  "website": "https://www.wikidata.org/",
+  "config": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "wikipediaLanguage": {
+          "type": "string",
+          "title": "Wikipedia language",
+          "description": "A supported Wikipedia language subdomain",
+          "enum": ["en", "de", "es", "fr", "it", "ja", "zh"],
+          "default": "en"
+        }
+      }
+    }
+  },
+  "permissions": {
+    "http": {
+      "reason": "Read artist metadata from Wikidata, DBpedia, and the configured Wikipedia language",
+      "requiredHosts": [
+        "query.wikidata.org",
+        "dbpedia.org",
+        "en.wikipedia.org",
+        "de.wikipedia.org",
+        "es.wikipedia.org",
+        "fr.wikipedia.org",
+        "it.wikipedia.org",
+        "ja.wikipedia.org",
+        "zh.wikipedia.org"
+      ]
+    },
+    "cache": {
+      "reason": "Deduplicate Wikidata, Wikipedia, and DBpedia lookups with bounded TTL caching"
+    }
+  }
+}
